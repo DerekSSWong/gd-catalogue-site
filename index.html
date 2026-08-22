@@ -607,14 +607,16 @@ function termMatches(d, text){
   // *somewhere* on the card. All words in the row must land on the SAME line.
   // Flavor text (d.quote) is deliberately excluded — search targets game-mechanical
   // fields only, not the descriptive blurb.
-  // Set panel text (name, members, bonus lines) is searchable too, so "explorer's
+  // Set NAME, tier bonuses and granted-skill lines are searchable, so "explorer's
   // garments" finds every piece of the set. Each stays its OWN line, like every
-  // other candidate — and renderSet() runs the same strings through highlight(),
-  // which is the parity this file's rules require: a field that is searched must
-  // also be highlighted, and only on the line that actually matched.
+  // other candidate — and renderSet() runs those same strings through highlight(),
+  // the parity this file's rules require.
+  // The MEMBER LIST is deliberately excluded (user request 2026-08-22), and is
+  // rendered with escapeHtml() rather than highlight() to match — the same
+  // both-or-neither treatment `quote` gets. It listed every piece on every
+  // sibling's card, so searching one item's name returned its whole set.
   const setLines = d.set
-    ? [d.set.name, ...d.set.members, ...d.set.tiers.flatMap(t=>t.bonuses),
-       ...(d.set.granted || [])] : [];
+    ? [d.set.name, ...d.set.tiers.flatMap(t=>t.bonuses), ...(d.set.granted || [])] : [];
   const lines = [d.name, ...d.effects, d.faction, ...setLines]
     .map(s=>stripApostrophes(s.toLowerCase()));
   // Match each word in the row independently (order/adjacency don't matter
@@ -876,7 +878,8 @@ function renderSet(set, ownName){
   const members = set.members.map(m=>{
     const cls = [m === ownName ? 'self' : '', transmuteOnly.includes(m) ? 'transmute' : '']
       .filter(Boolean).join(' ');
-    return `<li class="${cls}">${highlight(m)}</li>`;
+    // escapeHtml, not highlight: the member list is outside search scope.
+    return `<li class="${cls}">${escapeHtml(m)}</li>`;
   }).join('');
   // A set's granted skill belongs to no tier (the record has no array for it and
   // the game lists it separately), so it gets its own block below the tiers.
@@ -1210,14 +1213,16 @@ function termMatches(d, text){
   // *somewhere* on the card. All words in the row must land on the SAME line.
   // Flavor text (d.quote) is deliberately excluded — search targets game-mechanical
   // fields only, not the descriptive blurb.
-  // Set panel text (name, members, bonus lines) is searchable too, so "explorer's
+  // Set NAME, tier bonuses and granted-skill lines are searchable, so "explorer's
   // garments" finds every piece of the set. Each stays its OWN line, like every
-  // other candidate — and renderSet() runs the same strings through highlight(),
-  // which is the parity this file's rules require: a field that is searched must
-  // also be highlighted, and only on the line that actually matched.
+  // other candidate — and renderSet() runs those same strings through highlight(),
+  // the parity this file's rules require.
+  // The MEMBER LIST is deliberately excluded (user request 2026-08-22), and is
+  // rendered with escapeHtml() rather than highlight() to match — the same
+  // both-or-neither treatment `quote` gets. It listed every piece on every
+  // sibling's card, so searching one item's name returned its whole set.
   const setLines = d.set
-    ? [d.set.name, ...d.set.members, ...d.set.tiers.flatMap(t=>t.bonuses),
-       ...(d.set.granted || [])] : [];
+    ? [d.set.name, ...d.set.tiers.flatMap(t=>t.bonuses), ...(d.set.granted || [])] : [];
   const lines = [d.name, ...d.effects, d.faction, ...setLines]
     .map(s=>stripApostrophes(s.toLowerCase()));
   // Match each word in the row independently (order/adjacency don't matter
@@ -1479,7 +1484,8 @@ function renderSet(set, ownName){
   const members = set.members.map(m=>{
     const cls = [m === ownName ? 'self' : '', transmuteOnly.includes(m) ? 'transmute' : '']
       .filter(Boolean).join(' ');
-    return `<li class="${cls}">${highlight(m)}</li>`;
+    // escapeHtml, not highlight: the member list is outside search scope.
+    return `<li class="${cls}">${escapeHtml(m)}</li>`;
   }).join('');
   // A set's granted skill belongs to no tier (the record has no array for it and
   // the game lists it separately), so it gets its own block below the tiers.
@@ -1830,14 +1836,16 @@ function termMatches(d, text){
   // *somewhere* on the card. All words in the row must land on the SAME line.
   // Flavor text (d.quote) is deliberately excluded — search targets game-mechanical
   // fields only, not the descriptive blurb.
-  // Set panel text (name, members, bonus lines) is searchable too, so "explorer's
+  // Set NAME, tier bonuses and granted-skill lines are searchable, so "explorer's
   // garments" finds every piece of the set. Each stays its OWN line, like every
-  // other candidate — and renderSet() runs the same strings through highlight(),
-  // which is the parity this file's rules require: a field that is searched must
-  // also be highlighted, and only on the line that actually matched.
+  // other candidate — and renderSet() runs those same strings through highlight(),
+  // the parity this file's rules require.
+  // The MEMBER LIST is deliberately excluded (user request 2026-08-22), and is
+  // rendered with escapeHtml() rather than highlight() to match — the same
+  // both-or-neither treatment `quote` gets. It listed every piece on every
+  // sibling's card, so searching one item's name returned its whole set.
   const setLines = d.set
-    ? [d.set.name, ...d.set.members, ...d.set.tiers.flatMap(t=>t.bonuses),
-       ...(d.set.granted || [])] : [];
+    ? [d.set.name, ...d.set.tiers.flatMap(t=>t.bonuses), ...(d.set.granted || [])] : [];
   const lines = [d.name, ...d.effects, d.faction, ...setLines]
     .map(s=>stripApostrophes(s.toLowerCase()));
   // Match each word in the row independently (order/adjacency don't matter
@@ -2099,7 +2107,8 @@ function renderSet(set, ownName){
   const members = set.members.map(m=>{
     const cls = [m === ownName ? 'self' : '', transmuteOnly.includes(m) ? 'transmute' : '']
       .filter(Boolean).join(' ');
-    return `<li class="${cls}">${highlight(m)}</li>`;
+    // escapeHtml, not highlight: the member list is outside search scope.
+    return `<li class="${cls}">${escapeHtml(m)}</li>`;
   }).join('');
   // A set's granted skill belongs to no tier (the record has no array for it and
   // the game lists it separately), so it gets its own block below the tiers.
