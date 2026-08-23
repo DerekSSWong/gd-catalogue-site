@@ -283,10 +283,6 @@
     letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent);
   }
   .craft-makes{ font-size: 11px; color: var(--ink-dim); }
-  .craft-back{
-    margin-left: auto; font-family: "IBM Plex Mono", monospace; font-size: 9.5px;
-    letter-spacing: 0.04em; color: var(--ink-faint);
-  }
   /* Two columns where there is room, stacked on narrow screens -- no media
      query needed, same auto-fit trick the filter row uses. */
   .craft-view{ display: flex; flex-direction: column; min-height: 0; }
@@ -1036,7 +1032,6 @@ function renderCraft(d){
       <div class="craft-head">
         <span class="craft-label">Crafting</span>
         ${r.makes > 1 ? `<span class="craft-makes">makes ${r.makes}</span>` : ''}
-        <span class="craft-back">click the card to close</span>
       </div>
       <div class="craft-cols">
         <div class="craft-col">
@@ -1977,7 +1972,6 @@ function renderCraft(d){
       <div class="craft-head">
         <span class="craft-label">Crafting</span>
         ${r.makes > 1 ? `<span class="craft-makes">makes ${r.makes}</span>` : ''}
-        <span class="craft-back">click the card to close</span>
       </div>
       <div class="craft-cols">
         <div class="craft-col">
@@ -2295,7 +2289,7 @@ render();
 <div class="masthead">
   <div class="masthead-inner">
     <h1>Craftable and Vendor Gear</h1>
-    <p class="dek"><strong>Usage tips:</strong><br>Type &ldquo;flat&rdquo; before a stat name (e.g. &ldquo;flat health&rdquo;) to match only its flat value.<br>Type &ldquo;%&rdquo; before a stat name (e.g. &ldquo;% health&rdquo;) to match only its percentage value.</p>
+    <p class="dek"><strong>Usage tips:</strong><br>Type &ldquo;flat&rdquo; before a stat name (e.g. &ldquo;flat health&rdquo;) to match only its flat value.<br>Type &ldquo;%&rdquo; before a stat name (e.g. &ldquo;% health&rdquo;) to match only its percentage value.<br>Click on an item card to reveal its ingredients.</p>
   </div>
 </div>
 
@@ -2935,7 +2929,6 @@ function renderCraft(d){
       <div class="craft-head">
         <span class="craft-label">Crafting</span>
         ${r.makes > 1 ? `<span class="craft-makes">makes ${r.makes}</span>` : ''}
-        <span class="craft-back">click the card to close</span>
       </div>
       <div class="craft-cols">
         <div class="craft-col">
