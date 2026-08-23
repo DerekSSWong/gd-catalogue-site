@@ -1,3 +1,10 @@
+<meta charset="utf-8">
+<!-- WITHOUT THE VIEWPORT TAG A PHONE LAYS THIS OUT AT ~980px AND SHRINKS IT:
+     text becomes unreadable and every auto-fit grid (filters, crafting columns)
+     stays in its wide form because the CSS sees a desktop-width viewport. The
+     artifact copy looked fine only because the publish wrapper injects its own
+     head with this tag -- the Pages copy has no wrapper, so it must carry it. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow, noarchive">
 <title>GD Catalogue</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
@@ -336,6 +343,10 @@
     font-size: 11px; color: var(--ink-faint); line-height: 1.6;
   }
   footer code{ font-family: "IBM Plex Mono", monospace; }
+  /* Footer prose cites full record paths -- 82 characters unbroken on the
+     Craftable tab. On a phone that is wider than the screen, and one overflowing
+     word makes the whole PAGE scroll sideways, not just the footer. */
+  footer code, .card-location, .craft-name{ overflow-wrap: anywhere; }
 
   /* ---------- Back to top ---------- */
   .back-to-top{
@@ -380,7 +391,10 @@
     font-family: "Cinzel", serif; font-weight: 700; font-size: 16px;
     letter-spacing: 0.02em; color: var(--ink);
   }
-  .tab-bar{ max-width: 1080px; margin: 0 auto; display: flex; gap: 4px; padding: 10px 20px 0; }
+  /* wrap, don't overflow: three uppercase labels do not fit a 360px phone on one
+     line, and a too-wide tab bar makes the whole page scroll sideways. */
+  .tab-bar{ max-width: 1080px; margin: 0 auto; display: flex; flex-wrap: wrap;
+            gap: 4px; padding: 10px 20px 0; }
   .tab-bar button{
     font-family: "IBM Plex Mono", monospace; font-size: 11.5px; font-weight: 600;
     letter-spacing: 0.05em; text-transform: uppercase; cursor: pointer;
