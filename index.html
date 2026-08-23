@@ -499,6 +499,12 @@ function alphabeticalNoneLast(values){
 }
 
 function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// escapeHtml is for TEXT: it leaves quotes alone, which is fine between tags and
+// wrong inside an attribute. `data-item` carries an item name and is read back by
+// the card handlers, so it gets the quote-safe variant. No name contains a double
+// quote today (checked across all three datasets); this is so that stops being
+// load-bearing.
+function escapeAttr(s){ return escapeHtml(s).replace(/"/g,'&quot;'); }
 
 function famTagRedundant(badge, slotLabel){
   if(!badge || !slotLabel) return false;
@@ -1035,7 +1041,68 @@ function renderSet(set, ownName){
     </div>`;
 }
 
-function render(){
+// Cards are painted in CHUNKS. Building one card costs ~5-13us depending on the
+// catalogue, so a full grid is 3-20ms of string work per keystroke or filter
+// click -- and in a browser the innerHTML write then reparses all of it. Painting
+// the first screenful and filling the rest in the background makes every state
+// change cost the same regardless of how many rows matched.
+const CHUNK = 60;
+// How many cards are currently in the DOM. An interaction (opening a card,
+// ticking an ingredient) must repaint AT LEAST this many: the card being
+// interacted with can sit anywhere in the list, and repainting only the first
+// chunk would delete it from under the pointer.
+let paintedCount = 0;
+// Bumped on every render(); a fill scheduled by an older render sees a stale
+// token and stops, so a slow tail can never append rows from a superseded query.
+let paintToken = 0;
+let pendingRows = [];
+
+function paintCards(rows, minCount){
+  const token = ++paintToken;
+  const upto = Math.min(rows.length, Math.max(CHUNK, minCount || 0));
+  cardGrid.innerHTML = rows.slice(0, upto).map(cardHtml).join('');
+  paintedCount = upto;
+  pendingRows = rows.slice(upto);
+  if(pendingRows.length) scheduleFill(token);
+}
+
+function fillNext(token, all){
+  if(token !== paintToken || !pendingRows.length) return;
+  const slice = all ? pendingRows : pendingRows.slice(0, CHUNK);
+  pendingRows = all ? [] : pendingRows.slice(CHUNK);
+  // insertAdjacentHTML, never `innerHTML +=`: the latter re-serialises and
+  // reparses every card already on the page, which is the cost this exists to
+  // avoid -- and it would also drop the checked state of any open card's
+  // ingredient boxes.
+  cardGrid.insertAdjacentHTML('beforeend', slice.map(cardHtml).join(''));
+  paintedCount += slice.length;
+  if(pendingRows.length) scheduleFill(token);
+}
+
+function scheduleFill(token){
+  const idle = window.requestIdleCallback
+    || (fn=> setTimeout(()=> fn({ timeRemaining: ()=> 0 }), 16));
+  idle(()=> fillNext(token, false), { timeout: 200 });
+}
+
+// Scrolling near the end jumps the queue: the idle filler is for the rows nobody
+// has asked for yet, but a reader who has scrolled there is asking now.
+window.addEventListener('scroll', ()=>{
+  if(!pendingRows.length) return;
+  const nearBottom = window.innerHeight + window.scrollY
+    > document.body.scrollHeight - 900;
+  if(nearBottom) fillNext(paintToken, false);
+}, { passive: true });
+
+// The smoke tests drive the REAL chunked path and then flush, rather than the
+// page falling back to a synchronous paint when it cannot see a browser -- a
+// gate that exercises a different code path than production is not a gate.
+(window.__gdFlushCards = window.__gdFlushCards || []).push(()=> fillNext(paintToken, true));
+
+// `opts.keepPainted` -- repaint what is already on screen rather than shrinking
+// back to one chunk. Set by the card interactions, NOT by search or facet
+// changes: there the row set itself changed, so starting from the top is right.
+function render(opts){
   let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && passesSearch(d));
   rows.sort((a,b)=> a.faction.localeCompare(b.faction) || a.name.localeCompare(b.name));
 
@@ -1043,13 +1110,19 @@ function render(){
   updateFacetCounts();
 
   if(rows.length === 0){
+    paintToken++;
+    pendingRows = [];
+    paintedCount = 0;
     cardGrid.innerHTML = '';
     emptyState.style.display = 'block';
     return;
   }
   emptyState.style.display = 'none';
+  paintCards(rows, opts && opts.keepPainted ? paintedCount : 0);
+}
 
-  cardGrid.innerHTML = rows.map(d=>{
+function cardHtml(d){
+  return (d=>{
     const badge = d.badge ? `<span class="badge-tag">${escapeHtml(d.badge)}</span>` : '';
     const typeColor = TYPE_COLORS[d.type] || '#888';
     const lvl = d.lvl ? `<div class="card-lvl">Lv ${d.lvl}</div>` : '';
@@ -1072,7 +1145,7 @@ function render(){
     const craftable = !!d.recipe;
     const open = craftable && state.openRecipes.has(d.name);
     const cardAttrs = craftable
-      ? ` class="card craftable${open ? ' open' : ''}" data-item="${escapeHtml(d.name)}"`
+      ? ` class="card craftable${open ? ' open' : ''}" data-item="${escapeAttr(d.name)}"`
         // Height is pinned to what the STAT view measured at the moment of
         // opening, so flipping a card never reflows the grid around it. The
         // crafting body scrolls inside that box when it is the taller of the two.
@@ -1101,7 +1174,7 @@ function render(){
       ${open ? '' : (d.quote ? `<p class="card-quote">&ldquo;${escapeHtml(d.quote)}&rdquo;</p>` : '')}
       ${open ? '' : renderSet(d.set, d.name)}
     </div>`;
-  }).join('');
+  })(d);
 }
 
 // Card toggle. Delegated on the grid, because render() replaces its innerHTML on
@@ -1123,7 +1196,7 @@ function toggleCraft(target){
     if(h) state.cardHeights[name] = h;
     state.openRecipes.add(name);
   }
-  render();
+  render({ keepPainted: true });
   return true;
 }
 
@@ -1138,7 +1211,7 @@ function craftPick(target){
   const sel = state.craftSel[name];
   if(!sel || Number.isNaN(idx)) return false;
   if(sel.has(idx)) sel.delete(idx); else sel.add(idx);
-  render();
+  render({ keepPainted: true });
   return true;
 }
 cardGrid.addEventListener('click', e=>{
@@ -1264,6 +1337,12 @@ function alphabeticalNoneLast(values){
 }
 
 function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// escapeHtml is for TEXT: it leaves quotes alone, which is fine between tags and
+// wrong inside an attribute. `data-item` carries an item name and is read back by
+// the card handlers, so it gets the quote-safe variant. No name contains a double
+// quote today (checked across all three datasets); this is so that stops being
+// load-bearing.
+function escapeAttr(s){ return escapeHtml(s).replace(/"/g,'&quot;'); }
 
 function famTagRedundant(badge, slotLabel){
   if(!badge || !slotLabel) return false;
@@ -1800,7 +1879,68 @@ function renderSet(set, ownName){
     </div>`;
 }
 
-function render(){
+// Cards are painted in CHUNKS. Building one card costs ~5-13us depending on the
+// catalogue, so a full grid is 3-20ms of string work per keystroke or filter
+// click -- and in a browser the innerHTML write then reparses all of it. Painting
+// the first screenful and filling the rest in the background makes every state
+// change cost the same regardless of how many rows matched.
+const CHUNK = 60;
+// How many cards are currently in the DOM. An interaction (opening a card,
+// ticking an ingredient) must repaint AT LEAST this many: the card being
+// interacted with can sit anywhere in the list, and repainting only the first
+// chunk would delete it from under the pointer.
+let paintedCount = 0;
+// Bumped on every render(); a fill scheduled by an older render sees a stale
+// token and stops, so a slow tail can never append rows from a superseded query.
+let paintToken = 0;
+let pendingRows = [];
+
+function paintCards(rows, minCount){
+  const token = ++paintToken;
+  const upto = Math.min(rows.length, Math.max(CHUNK, minCount || 0));
+  cardGrid.innerHTML = rows.slice(0, upto).map(cardHtml).join('');
+  paintedCount = upto;
+  pendingRows = rows.slice(upto);
+  if(pendingRows.length) scheduleFill(token);
+}
+
+function fillNext(token, all){
+  if(token !== paintToken || !pendingRows.length) return;
+  const slice = all ? pendingRows : pendingRows.slice(0, CHUNK);
+  pendingRows = all ? [] : pendingRows.slice(CHUNK);
+  // insertAdjacentHTML, never `innerHTML +=`: the latter re-serialises and
+  // reparses every card already on the page, which is the cost this exists to
+  // avoid -- and it would also drop the checked state of any open card's
+  // ingredient boxes.
+  cardGrid.insertAdjacentHTML('beforeend', slice.map(cardHtml).join(''));
+  paintedCount += slice.length;
+  if(pendingRows.length) scheduleFill(token);
+}
+
+function scheduleFill(token){
+  const idle = window.requestIdleCallback
+    || (fn=> setTimeout(()=> fn({ timeRemaining: ()=> 0 }), 16));
+  idle(()=> fillNext(token, false), { timeout: 200 });
+}
+
+// Scrolling near the end jumps the queue: the idle filler is for the rows nobody
+// has asked for yet, but a reader who has scrolled there is asking now.
+window.addEventListener('scroll', ()=>{
+  if(!pendingRows.length) return;
+  const nearBottom = window.innerHeight + window.scrollY
+    > document.body.scrollHeight - 900;
+  if(nearBottom) fillNext(paintToken, false);
+}, { passive: true });
+
+// The smoke tests drive the REAL chunked path and then flush, rather than the
+// page falling back to a synchronous paint when it cannot see a browser -- a
+// gate that exercises a different code path than production is not a gate.
+(window.__gdFlushCards = window.__gdFlushCards || []).push(()=> fillNext(paintToken, true));
+
+// `opts.keepPainted` -- repaint what is already on screen rather than shrinking
+// back to one chunk. Set by the card interactions, NOT by search or facet
+// changes: there the row set itself changed, so starting from the top is right.
+function render(opts){
   let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && passesSearch(d));
   rows.sort((a,b)=> a.faction.localeCompare(b.faction) || a.name.localeCompare(b.name));
 
@@ -1808,13 +1948,19 @@ function render(){
   updateFacetCounts();
 
   if(rows.length === 0){
+    paintToken++;
+    pendingRows = [];
+    paintedCount = 0;
     cardGrid.innerHTML = '';
     emptyState.style.display = 'block';
     return;
   }
   emptyState.style.display = 'none';
+  paintCards(rows, opts && opts.keepPainted ? paintedCount : 0);
+}
 
-  cardGrid.innerHTML = rows.map(d=>{
+function cardHtml(d){
+  return (d=>{
     const badge = d.badge ? `<span class="badge-tag">${escapeHtml(d.badge)}</span>` : '';
     const typeColor = TYPE_COLORS[d.type] || '#888';
     const lvl = d.lvl ? `<div class="card-lvl">Lv ${d.lvl}</div>` : '';
@@ -1837,7 +1983,7 @@ function render(){
     const craftable = !!d.recipe;
     const open = craftable && state.openRecipes.has(d.name);
     const cardAttrs = craftable
-      ? ` class="card craftable${open ? ' open' : ''}" data-item="${escapeHtml(d.name)}"`
+      ? ` class="card craftable${open ? ' open' : ''}" data-item="${escapeAttr(d.name)}"`
         // Height is pinned to what the STAT view measured at the moment of
         // opening, so flipping a card never reflows the grid around it. The
         // crafting body scrolls inside that box when it is the taller of the two.
@@ -1866,7 +2012,7 @@ function render(){
       ${open ? '' : (d.quote ? `<p class="card-quote">&ldquo;${escapeHtml(d.quote)}&rdquo;</p>` : '')}
       ${open ? '' : renderSet(d.set, d.name)}
     </div>`;
-  }).join('');
+  })(d);
 }
 
 // Card toggle. Delegated on the grid, because render() replaces its innerHTML on
@@ -1888,7 +2034,7 @@ function toggleCraft(target){
     if(h) state.cardHeights[name] = h;
     state.openRecipes.add(name);
   }
-  render();
+  render({ keepPainted: true });
   return true;
 }
 
@@ -1903,7 +2049,7 @@ function craftPick(target){
   const sel = state.craftSel[name];
   if(!sel || Number.isNaN(idx)) return false;
   if(sel.has(idx)) sel.delete(idx); else sel.add(idx);
-  render();
+  render({ keepPainted: true });
   return true;
 }
 cardGrid.addEventListener('click', e=>{
@@ -2046,6 +2192,12 @@ function alphabeticalNoneLast(values){
 }
 
 function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// escapeHtml is for TEXT: it leaves quotes alone, which is fine between tags and
+// wrong inside an attribute. `data-item` carries an item name and is read back by
+// the card handlers, so it gets the quote-safe variant. No name contains a double
+// quote today (checked across all three datasets); this is so that stops being
+// load-bearing.
+function escapeAttr(s){ return escapeHtml(s).replace(/"/g,'&quot;'); }
 
 function famTagRedundant(badge, slotLabel){
   if(!badge || !slotLabel) return false;
@@ -2582,7 +2734,68 @@ function renderSet(set, ownName){
     </div>`;
 }
 
-function render(){
+// Cards are painted in CHUNKS. Building one card costs ~5-13us depending on the
+// catalogue, so a full grid is 3-20ms of string work per keystroke or filter
+// click -- and in a browser the innerHTML write then reparses all of it. Painting
+// the first screenful and filling the rest in the background makes every state
+// change cost the same regardless of how many rows matched.
+const CHUNK = 60;
+// How many cards are currently in the DOM. An interaction (opening a card,
+// ticking an ingredient) must repaint AT LEAST this many: the card being
+// interacted with can sit anywhere in the list, and repainting only the first
+// chunk would delete it from under the pointer.
+let paintedCount = 0;
+// Bumped on every render(); a fill scheduled by an older render sees a stale
+// token and stops, so a slow tail can never append rows from a superseded query.
+let paintToken = 0;
+let pendingRows = [];
+
+function paintCards(rows, minCount){
+  const token = ++paintToken;
+  const upto = Math.min(rows.length, Math.max(CHUNK, minCount || 0));
+  cardGrid.innerHTML = rows.slice(0, upto).map(cardHtml).join('');
+  paintedCount = upto;
+  pendingRows = rows.slice(upto);
+  if(pendingRows.length) scheduleFill(token);
+}
+
+function fillNext(token, all){
+  if(token !== paintToken || !pendingRows.length) return;
+  const slice = all ? pendingRows : pendingRows.slice(0, CHUNK);
+  pendingRows = all ? [] : pendingRows.slice(CHUNK);
+  // insertAdjacentHTML, never `innerHTML +=`: the latter re-serialises and
+  // reparses every card already on the page, which is the cost this exists to
+  // avoid -- and it would also drop the checked state of any open card's
+  // ingredient boxes.
+  cardGrid.insertAdjacentHTML('beforeend', slice.map(cardHtml).join(''));
+  paintedCount += slice.length;
+  if(pendingRows.length) scheduleFill(token);
+}
+
+function scheduleFill(token){
+  const idle = window.requestIdleCallback
+    || (fn=> setTimeout(()=> fn({ timeRemaining: ()=> 0 }), 16));
+  idle(()=> fillNext(token, false), { timeout: 200 });
+}
+
+// Scrolling near the end jumps the queue: the idle filler is for the rows nobody
+// has asked for yet, but a reader who has scrolled there is asking now.
+window.addEventListener('scroll', ()=>{
+  if(!pendingRows.length) return;
+  const nearBottom = window.innerHeight + window.scrollY
+    > document.body.scrollHeight - 900;
+  if(nearBottom) fillNext(paintToken, false);
+}, { passive: true });
+
+// The smoke tests drive the REAL chunked path and then flush, rather than the
+// page falling back to a synchronous paint when it cannot see a browser -- a
+// gate that exercises a different code path than production is not a gate.
+(window.__gdFlushCards = window.__gdFlushCards || []).push(()=> fillNext(paintToken, true));
+
+// `opts.keepPainted` -- repaint what is already on screen rather than shrinking
+// back to one chunk. Set by the card interactions, NOT by search or facet
+// changes: there the row set itself changed, so starting from the top is right.
+function render(opts){
   let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && passesSearch(d));
   rows.sort((a,b)=> a.faction.localeCompare(b.faction) || a.name.localeCompare(b.name));
 
@@ -2590,13 +2803,19 @@ function render(){
   updateFacetCounts();
 
   if(rows.length === 0){
+    paintToken++;
+    pendingRows = [];
+    paintedCount = 0;
     cardGrid.innerHTML = '';
     emptyState.style.display = 'block';
     return;
   }
   emptyState.style.display = 'none';
+  paintCards(rows, opts && opts.keepPainted ? paintedCount : 0);
+}
 
-  cardGrid.innerHTML = rows.map(d=>{
+function cardHtml(d){
+  return (d=>{
     const badge = d.badge ? `<span class="badge-tag">${escapeHtml(d.badge)}</span>` : '';
     const typeColor = TYPE_COLORS[d.type] || '#888';
     const lvl = d.lvl ? `<div class="card-lvl">Lv ${d.lvl}</div>` : '';
@@ -2619,7 +2838,7 @@ function render(){
     const craftable = !!d.recipe;
     const open = craftable && state.openRecipes.has(d.name);
     const cardAttrs = craftable
-      ? ` class="card craftable${open ? ' open' : ''}" data-item="${escapeHtml(d.name)}"`
+      ? ` class="card craftable${open ? ' open' : ''}" data-item="${escapeAttr(d.name)}"`
         // Height is pinned to what the STAT view measured at the moment of
         // opening, so flipping a card never reflows the grid around it. The
         // crafting body scrolls inside that box when it is the taller of the two.
@@ -2648,7 +2867,7 @@ function render(){
       ${open ? '' : (d.quote ? `<p class="card-quote">&ldquo;${escapeHtml(d.quote)}&rdquo;</p>` : '')}
       ${open ? '' : renderSet(d.set, d.name)}
     </div>`;
-  }).join('');
+  })(d);
 }
 
 // Card toggle. Delegated on the grid, because render() replaces its innerHTML on
@@ -2670,7 +2889,7 @@ function toggleCraft(target){
     if(h) state.cardHeights[name] = h;
     state.openRecipes.add(name);
   }
-  render();
+  render({ keepPainted: true });
   return true;
 }
 
@@ -2685,7 +2904,7 @@ function craftPick(target){
   const sel = state.craftSel[name];
   if(!sel || Number.isNaN(idx)) return false;
   if(sel.has(idx)) sel.delete(idx); else sel.add(idx);
-  render();
+  render({ keepPainted: true });
   return true;
 }
 cardGrid.addEventListener('click', e=>{
