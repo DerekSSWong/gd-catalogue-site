@@ -693,6 +693,31 @@ function termMatches(d, text){
 // Rows combine left-to-right, no operator precedence (each row's operator
 // applies to the running result so far vs. that row's own match):
 //   AND -> result && match   OR -> result || match   NOT -> result && !match
+// passesSearch() is pure over (item, state.searchRows) -- it reads NO facet state,
+// no card state, no sort -- so a verdict stays valid until the QUERY changes, not
+// merely until the next render. That is what makes this cache survive facet
+// clicks, card flips and ingredient ticks, where the search answer cannot have
+// moved. updateFacetCounts() alone asks the question once per facet, so the
+// uncached cost was (1 + facets) x items per render: 9,666 calls on the
+// Craftable tab, ~36ms of a 45ms facet click.
+let searchCache = new Map();      // item object -> boolean
+let searchCacheKey = '';
+
+// THE SIGNATURE MUST NAME EVERYTHING passesSearch READS. Today that is each row's
+// text and op. If search ever grows another input (a whole-word toggle, a
+// case-sensitivity flag), it belongs here too -- forgetting it does not crash,
+// it silently serves the previous query's answers.
+function syncSearchCache(){
+  const key = JSON.stringify(state.searchRows.map(r=>[r.text, r.op]));
+  if(key !== searchCacheKey){ searchCacheKey = key; searchCache = new Map(); }
+}
+
+function searchVerdict(d){
+  let v = searchCache.get(d);
+  if(v === undefined){ v = passesSearch(d); searchCache.set(d, v); }
+  return v;
+}
+
 function passesSearch(d){
   const rows = state.searchRows.filter(r=>r.text.trim() !== '');
   if(rows.length === 0) return true;
@@ -714,7 +739,7 @@ function passesSearch(d){
 // that would return 0 under the other active filters get dimmed, not hidden.
 function updateFacetCounts(){
   FACETS.forEach(f=>{
-    const pool = DATA.filter(d=> passesSearch(d) && FACETS.every(g=> g===f || facetPasses(d, g)));
+    const pool = DATA.filter(d=> searchVerdict(d) && FACETS.every(g=> g===f || facetPasses(d, g)));
     const c = counts(f, pool);
     const { countEls, optEls } = facetEls[f.id];
     f.values.forEach(v=>{
@@ -1098,12 +1123,21 @@ window.addEventListener('scroll', ()=>{
 // page falling back to a synchronous paint when it cannot see a browser -- a
 // gate that exercises a different code path than production is not a gate.
 (window.__gdFlushCards = window.__gdFlushCards || []).push(()=> fillNext(paintToken, true));
+// Test hook. The smoke tests must be able to drive a real query/facet change and
+// recount from scratch with the UNCACHED passesSearch -- that is the only way to
+// catch a stale search cache, which shows up as wrong results rather than as an
+// error. Exposed per panel because each shell tab is its own closure.
+(window.__gdPanels = window.__gdPanels || []).push({
+  state, render, DATA, FACETS, passesSearch, facetPasses,
+  cards: ()=> (cardGrid.innerHTML.match(/<div[^>]*class="card[ "]/g) || []).length,
+});
 
 // `opts.keepPainted` -- repaint what is already on screen rather than shrinking
 // back to one chunk. Set by the card interactions, NOT by search or facet
 // changes: there the row set itself changed, so starting from the top is right.
 function render(opts){
-  let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && passesSearch(d));
+  syncSearchCache();
+  let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && searchVerdict(d));
   rows.sort((a,b)=> a.faction.localeCompare(b.faction) || a.name.localeCompare(b.name));
 
   countReadout.innerHTML = `<b>${rows.length}</b> / ${DATA.length} items`;
@@ -1531,6 +1565,31 @@ function termMatches(d, text){
 // Rows combine left-to-right, no operator precedence (each row's operator
 // applies to the running result so far vs. that row's own match):
 //   AND -> result && match   OR -> result || match   NOT -> result && !match
+// passesSearch() is pure over (item, state.searchRows) -- it reads NO facet state,
+// no card state, no sort -- so a verdict stays valid until the QUERY changes, not
+// merely until the next render. That is what makes this cache survive facet
+// clicks, card flips and ingredient ticks, where the search answer cannot have
+// moved. updateFacetCounts() alone asks the question once per facet, so the
+// uncached cost was (1 + facets) x items per render: 9,666 calls on the
+// Craftable tab, ~36ms of a 45ms facet click.
+let searchCache = new Map();      // item object -> boolean
+let searchCacheKey = '';
+
+// THE SIGNATURE MUST NAME EVERYTHING passesSearch READS. Today that is each row's
+// text and op. If search ever grows another input (a whole-word toggle, a
+// case-sensitivity flag), it belongs here too -- forgetting it does not crash,
+// it silently serves the previous query's answers.
+function syncSearchCache(){
+  const key = JSON.stringify(state.searchRows.map(r=>[r.text, r.op]));
+  if(key !== searchCacheKey){ searchCacheKey = key; searchCache = new Map(); }
+}
+
+function searchVerdict(d){
+  let v = searchCache.get(d);
+  if(v === undefined){ v = passesSearch(d); searchCache.set(d, v); }
+  return v;
+}
+
 function passesSearch(d){
   const rows = state.searchRows.filter(r=>r.text.trim() !== '');
   if(rows.length === 0) return true;
@@ -1552,7 +1611,7 @@ function passesSearch(d){
 // that would return 0 under the other active filters get dimmed, not hidden.
 function updateFacetCounts(){
   FACETS.forEach(f=>{
-    const pool = DATA.filter(d=> passesSearch(d) && FACETS.every(g=> g===f || facetPasses(d, g)));
+    const pool = DATA.filter(d=> searchVerdict(d) && FACETS.every(g=> g===f || facetPasses(d, g)));
     const c = counts(f, pool);
     const { countEls, optEls } = facetEls[f.id];
     f.values.forEach(v=>{
@@ -1936,12 +1995,21 @@ window.addEventListener('scroll', ()=>{
 // page falling back to a synchronous paint when it cannot see a browser -- a
 // gate that exercises a different code path than production is not a gate.
 (window.__gdFlushCards = window.__gdFlushCards || []).push(()=> fillNext(paintToken, true));
+// Test hook. The smoke tests must be able to drive a real query/facet change and
+// recount from scratch with the UNCACHED passesSearch -- that is the only way to
+// catch a stale search cache, which shows up as wrong results rather than as an
+// error. Exposed per panel because each shell tab is its own closure.
+(window.__gdPanels = window.__gdPanels || []).push({
+  state, render, DATA, FACETS, passesSearch, facetPasses,
+  cards: ()=> (cardGrid.innerHTML.match(/<div[^>]*class="card[ "]/g) || []).length,
+});
 
 // `opts.keepPainted` -- repaint what is already on screen rather than shrinking
 // back to one chunk. Set by the card interactions, NOT by search or facet
 // changes: there the row set itself changed, so starting from the top is right.
 function render(opts){
-  let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && passesSearch(d));
+  syncSearchCache();
+  let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && searchVerdict(d));
   rows.sort((a,b)=> a.faction.localeCompare(b.faction) || a.name.localeCompare(b.name));
 
   countReadout.innerHTML = `<b>${rows.length}</b> / ${DATA.length} items`;
@@ -2386,6 +2454,31 @@ function termMatches(d, text){
 // Rows combine left-to-right, no operator precedence (each row's operator
 // applies to the running result so far vs. that row's own match):
 //   AND -> result && match   OR -> result || match   NOT -> result && !match
+// passesSearch() is pure over (item, state.searchRows) -- it reads NO facet state,
+// no card state, no sort -- so a verdict stays valid until the QUERY changes, not
+// merely until the next render. That is what makes this cache survive facet
+// clicks, card flips and ingredient ticks, where the search answer cannot have
+// moved. updateFacetCounts() alone asks the question once per facet, so the
+// uncached cost was (1 + facets) x items per render: 9,666 calls on the
+// Craftable tab, ~36ms of a 45ms facet click.
+let searchCache = new Map();      // item object -> boolean
+let searchCacheKey = '';
+
+// THE SIGNATURE MUST NAME EVERYTHING passesSearch READS. Today that is each row's
+// text and op. If search ever grows another input (a whole-word toggle, a
+// case-sensitivity flag), it belongs here too -- forgetting it does not crash,
+// it silently serves the previous query's answers.
+function syncSearchCache(){
+  const key = JSON.stringify(state.searchRows.map(r=>[r.text, r.op]));
+  if(key !== searchCacheKey){ searchCacheKey = key; searchCache = new Map(); }
+}
+
+function searchVerdict(d){
+  let v = searchCache.get(d);
+  if(v === undefined){ v = passesSearch(d); searchCache.set(d, v); }
+  return v;
+}
+
 function passesSearch(d){
   const rows = state.searchRows.filter(r=>r.text.trim() !== '');
   if(rows.length === 0) return true;
@@ -2407,7 +2500,7 @@ function passesSearch(d){
 // that would return 0 under the other active filters get dimmed, not hidden.
 function updateFacetCounts(){
   FACETS.forEach(f=>{
-    const pool = DATA.filter(d=> passesSearch(d) && FACETS.every(g=> g===f || facetPasses(d, g)));
+    const pool = DATA.filter(d=> searchVerdict(d) && FACETS.every(g=> g===f || facetPasses(d, g)));
     const c = counts(f, pool);
     const { countEls, optEls } = facetEls[f.id];
     f.values.forEach(v=>{
@@ -2791,12 +2884,21 @@ window.addEventListener('scroll', ()=>{
 // page falling back to a synchronous paint when it cannot see a browser -- a
 // gate that exercises a different code path than production is not a gate.
 (window.__gdFlushCards = window.__gdFlushCards || []).push(()=> fillNext(paintToken, true));
+// Test hook. The smoke tests must be able to drive a real query/facet change and
+// recount from scratch with the UNCACHED passesSearch -- that is the only way to
+// catch a stale search cache, which shows up as wrong results rather than as an
+// error. Exposed per panel because each shell tab is its own closure.
+(window.__gdPanels = window.__gdPanels || []).push({
+  state, render, DATA, FACETS, passesSearch, facetPasses,
+  cards: ()=> (cardGrid.innerHTML.match(/<div[^>]*class="card[ "]/g) || []).length,
+});
 
 // `opts.keepPainted` -- repaint what is already on screen rather than shrinking
 // back to one chunk. Set by the card interactions, NOT by search or facet
 // changes: there the row set itself changed, so starting from the top is right.
 function render(opts){
-  let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && passesSearch(d));
+  syncSearchCache();
+  let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && searchVerdict(d));
   rows.sort((a,b)=> a.faction.localeCompare(b.faction) || a.name.localeCompare(b.name));
 
   countReadout.innerHTML = `<b>${rows.length}</b> / ${DATA.length} items`;
