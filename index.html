@@ -1322,18 +1322,20 @@ cardGrid.addEventListener('click', e=>{
   if(sel && String(sel).length > 0) return;
   const t = e.target;
   if(t && t.closest && t.closest('.craft-list')){
-    // Inside the lists: a checkbox (or its label) toggles selection, and any
-    // other click there does nothing. Flipping the card shut from under the
-    // pointer while someone is ticking ingredients is the bug this avoids.
-    if(t.closest('input[type=checkbox]')) craftPick(t);
+    // Inside the lists: do NOTHING here. A tick is handled by `change` alone.
+    // Handling it here TOO ran craftPick twice for one click -- the browser
+    // fires click (bubbling from the input) and then change -- so the selection
+    // toggled and untoggled and the raw column never moved. Returning early
+    // still stops the card flipping shut from under someone ticking boxes,
+    // which is the other reason this branch exists.
     return;
   }
   toggleCraft(t);
 });
 cardGrid.addEventListener('change', e=>{
-  // Real checkboxes fire `change` when driven by keyboard or by clicking the
-  // label, neither of which reaches the click branch above with the input as
-  // its target.
+  // The ONE place a tick is handled. `change` covers every route to it -- mouse
+  // on the box, mouse on the label, Space on a focused box -- and fires exactly
+  // once per actual state change, which `click` does not.
   const t = e.target;
   if(t && t.type === 'checkbox') craftPick(t);
 });
@@ -2261,18 +2263,20 @@ cardGrid.addEventListener('click', e=>{
   if(sel && String(sel).length > 0) return;
   const t = e.target;
   if(t && t.closest && t.closest('.craft-list')){
-    // Inside the lists: a checkbox (or its label) toggles selection, and any
-    // other click there does nothing. Flipping the card shut from under the
-    // pointer while someone is ticking ingredients is the bug this avoids.
-    if(t.closest('input[type=checkbox]')) craftPick(t);
+    // Inside the lists: do NOTHING here. A tick is handled by `change` alone.
+    // Handling it here TOO ran craftPick twice for one click -- the browser
+    // fires click (bubbling from the input) and then change -- so the selection
+    // toggled and untoggled and the raw column never moved. Returning early
+    // still stops the card flipping shut from under someone ticking boxes,
+    // which is the other reason this branch exists.
     return;
   }
   toggleCraft(t);
 });
 cardGrid.addEventListener('change', e=>{
-  // Real checkboxes fire `change` when driven by keyboard or by clicking the
-  // label, neither of which reaches the click branch above with the input as
-  // its target.
+  // The ONE place a tick is handled. `change` covers every route to it -- mouse
+  // on the box, mouse on the label, Space on a focused box -- and fires exactly
+  // once per actual state change, which `click` does not.
   const t = e.target;
   if(t && t.type === 'checkbox') craftPick(t);
 });
@@ -3217,18 +3221,20 @@ cardGrid.addEventListener('click', e=>{
   if(sel && String(sel).length > 0) return;
   const t = e.target;
   if(t && t.closest && t.closest('.craft-list')){
-    // Inside the lists: a checkbox (or its label) toggles selection, and any
-    // other click there does nothing. Flipping the card shut from under the
-    // pointer while someone is ticking ingredients is the bug this avoids.
-    if(t.closest('input[type=checkbox]')) craftPick(t);
+    // Inside the lists: do NOTHING here. A tick is handled by `change` alone.
+    // Handling it here TOO ran craftPick twice for one click -- the browser
+    // fires click (bubbling from the input) and then change -- so the selection
+    // toggled and untoggled and the raw column never moved. Returning early
+    // still stops the card flipping shut from under someone ticking boxes,
+    // which is the other reason this branch exists.
     return;
   }
   toggleCraft(t);
 });
 cardGrid.addEventListener('change', e=>{
-  // Real checkboxes fire `change` when driven by keyboard or by clicking the
-  // label, neither of which reaches the click branch above with the input as
-  // its target.
+  // The ONE place a tick is handled. `change` covers every route to it -- mouse
+  // on the box, mouse on the label, Space on a focused box -- and fires exactly
+  // once per actual state change, which `click` does not.
   const t = e.target;
   if(t && t.type === 'checkbox') craftPick(t);
 });
