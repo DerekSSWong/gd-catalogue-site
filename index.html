@@ -1157,7 +1157,13 @@ window.addEventListener('scroll', ()=>{
 function render(opts){
   syncSearchCache();
   let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && searchVerdict(d));
-  rows.sort((a,b)=> a.faction.localeCompare(b.faction) || a.name.localeCompare(b.name));
+  // Alphabetical by NAME, across the whole result set. `faction` used to be the
+  // primary key, but that field is repurposed per catalogue -- Faction here,
+  // Item Level on Target Farmable Gear, Rarity on Craftable -- so the list was
+  // grouped by whatever the coloured dot meant and only alphabetical inside each
+  // group. On the MI tab that reads as no order at all, since the level brackets
+  // interleave. The dot still shows the value and its facet still filters on it.
+  rows.sort((a,b)=> a.name.localeCompare(b.name));
 
   countReadout.innerHTML = `<b>${rows.length}</b> / ${DATA.length} items`;
   updateFacetCounts();
@@ -2097,7 +2103,13 @@ window.addEventListener('scroll', ()=>{
 function render(opts){
   syncSearchCache();
   let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && searchVerdict(d));
-  rows.sort((a,b)=> a.faction.localeCompare(b.faction) || a.name.localeCompare(b.name));
+  // Alphabetical by NAME, across the whole result set. `faction` used to be the
+  // primary key, but that field is repurposed per catalogue -- Faction here,
+  // Item Level on Target Farmable Gear, Rarity on Craftable -- so the list was
+  // grouped by whatever the coloured dot meant and only alphabetical inside each
+  // group. On the MI tab that reads as no order at all, since the level brackets
+  // interleave. The dot still shows the value and its facet still filters on it.
+  rows.sort((a,b)=> a.name.localeCompare(b.name));
 
   countReadout.innerHTML = `<b>${rows.length}</b> / ${DATA.length} items`;
   updateFacetCounts();
@@ -3054,7 +3066,13 @@ window.addEventListener('scroll', ()=>{
 function render(opts){
   syncSearchCache();
   let rows = DATA.filter(d=> FACETS.every(f=>facetPasses(d, f)) && searchVerdict(d));
-  rows.sort((a,b)=> a.faction.localeCompare(b.faction) || a.name.localeCompare(b.name));
+  // Alphabetical by NAME, across the whole result set. `faction` used to be the
+  // primary key, but that field is repurposed per catalogue -- Faction here,
+  // Item Level on Target Farmable Gear, Rarity on Craftable -- so the list was
+  // grouped by whatever the coloured dot meant and only alphabetical inside each
+  // group. On the MI tab that reads as no order at all, since the level brackets
+  // interleave. The dot still shows the value and its facet still filters on it.
+  rows.sort((a,b)=> a.name.localeCompare(b.name));
 
   countReadout.innerHTML = `<b>${rows.length}</b> / ${DATA.length} items`;
   updateFacetCounts();
