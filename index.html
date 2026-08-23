@@ -556,6 +556,13 @@ function facetValues(f){
 
 const FACETS = CONFIG.facets.map((f,i)=>({ ...f, id:`facet${i}`, values: facetValues(f) }));
 
+// Cards are identified by their INDEX in DATA, not by name. Names are not unique
+// in every dataset (the Augments tab has two "Potent Manticore Venom", one per
+// faction), and an integer is always safe inside a querySelector -- a selector
+// built from a display name would need CSS.escape and still break on quoting.
+const CARD_KEY = new Map(DATA.map((d, i)=> [d, i]));
+const keyOf = d=> CARD_KEY.get(d);
+
 let state = { searchRows: [{ text: "" }], openRecipes: new Set(),
               craftSel: {}, cardHeights: {} };
 FACETS.forEach(f=>{ state[f.id] = new Set(f.values); });
@@ -964,9 +971,27 @@ const countReadout = document.getElementById('countReadout-augments');
 // scope, and this file's rule is that the two move together.
 function craftSelection(d){
   // Default: everything selected, which reproduces the plain full-recipe view.
-  if(!state.craftSel[d.name]) state.craftSel[d.name] = new Set(d.recipe.direct.map((_g,i)=>i));
-  return state.craftSel[d.name];
+  const k = keyOf(d);
+  if(!state.craftSel[k]) state.craftSel[k] = new Set(d.recipe.direct.map((_g,i)=>i));
+  return state.craftSel[k];
 }
+
+// One definition of a raw row, used by the full render AND by the in-place patch
+// below -- two copies of this markup would drift the moment either changed.
+function craftRawRow(x){
+  return `<li class="craft-row raw">
+        <span class="craft-qty">${x.qty}&times;</span>
+        <span class="craft-name">${escapeHtml(x.name)}</span>
+        ${craftKindChip(x.kind)}
+      </li>`;
+}
+
+function craftRawHtml(totals){
+  return totals.rows.map(craftRawRow).join('')
+    || '<li class="craft-row empty">nothing selected</li>';
+}
+
+function craftIronText(n){ return n.toLocaleString() + ' iron total'; }
 
 function craftTotals(d){
   const sel = craftSelection(d);
@@ -1006,12 +1031,7 @@ function renderCraft(d){
           ${g.craftable ? '<span class="craft-kind craftable">craftable</span>' : ''}
         </label>
       </li>`).join('');
-  const raw = totals.rows.map(x=>`
-      <li class="craft-row raw">
-        <span class="craft-qty">${x.qty}&times;</span>
-        <span class="craft-name">${escapeHtml(x.name)}</span>
-        ${craftKindChip(x.kind)}
-      </li>`).join('');
+  const raw = craftRawHtml(totals);
   return `<div class="craft-view">
       <div class="craft-head">
         <span class="craft-label">Crafting</span>
@@ -1026,8 +1046,12 @@ function renderCraft(d){
         </div>
         <div class="craft-col">
           <h4>Net raw materials</h4>
-          <ul class="craft-list">${raw || '<li class="craft-row empty">nothing selected</li>'}</ul>
-          <div class="craft-total">${iron(totals.iron)} total</div>
+          <!-- .craft-raw / .craft-total-raw are the ONLY two nodes a checkbox
+               tick changes; patchCraftTotals() rewrites exactly these, which is
+               why the direct list (and the input you just clicked, and its
+               focus) is left alone. -->
+          <ul class="craft-list craft-raw">${raw}</ul>
+          <div class="craft-total craft-total-raw">${craftIronText(totals.iron)}</div>
         </div>
       </div>
     </div>`;
@@ -1177,13 +1201,14 @@ function cardHtml(d){
     // A card is only interactive when it HAS a recipe -- no pointer, no tab stop
     // and no handler on the other 900, so the view can never open empty.
     const craftable = !!d.recipe;
-    const open = craftable && state.openRecipes.has(d.name);
+    const key = keyOf(d);
+    const open = craftable && state.openRecipes.has(key);
     const cardAttrs = craftable
-      ? ` class="card craftable${open ? ' open' : ''}" data-item="${escapeAttr(d.name)}"`
+      ? ` class="card craftable${open ? ' open' : ''}" data-key="${key}" data-item="${escapeAttr(d.name)}"`
         // Height is pinned to what the STAT view measured at the moment of
         // opening, so flipping a card never reflows the grid around it. The
         // crafting body scrolls inside that box when it is the taller of the two.
-        + (open && state.cardHeights[d.name] ? ` style="height:${state.cardHeights[d.name]}px"` : '')
+        + (open && state.cardHeights[key] ? ` style="height:${state.cardHeights[key]}px"` : '')
         + ` role="button" tabindex="0" aria-expanded="${open}"`
         + ` title="${open ? 'Click to show stats' : 'Click to show the crafting recipe'}"`
       : ' class="card"';
@@ -1215,22 +1240,64 @@ function cardHtml(d){
 // every keystroke and per-card listeners would be re-bound (or leak) each time.
 // Keyboard included: the card carries role="button"/tabindex, so it must answer
 // Enter and Space like one.
-function toggleCraft(target){
+// --- In-place card updates -------------------------------------------------
+// Both interactions change exactly ONE card. Re-rendering the grid for them
+// costs ~21ms once the whole list is painted (and a full DOM reparse on top of
+// that in a browser), against 0.004ms to rebuild the one card that moved. Every
+// patch falls back to a full render if its target is not in the DOM -- correct
+// and slow beats silently stale.
+function cardEl(d){
+  return cardGrid.querySelector ? cardGrid.querySelector(`.card.craftable[data-key="${keyOf(d)}"]`) : null;
+}
+
+function patchCraftTotals(d){
+  const card = cardEl(d);
+  const list = card && card.querySelector && card.querySelector('.craft-raw');
+  const total = card && card.querySelector && card.querySelector('.craft-total-raw');
+  if(!list || !total) return false;
+  const totals = craftTotals(d);
+  list.innerHTML = craftRawHtml(totals);
+  total.textContent = craftIronText(totals.iron);
+  return true;
+}
+
+function patchCard(d){
+  const card = cardEl(d);
+  if(!card || typeof card.outerHTML !== 'string') return false;
+  // The card carries role="button"/tabindex, so a keyboard user can be standing
+  // on it when it is replaced. outerHTML discards the element, so focus has to be
+  // put back on its replacement.
+  const hadFocus = typeof document !== 'undefined' && document.activeElement === card;
+  card.outerHTML = cardHtml(d);
+  if(hadFocus){
+    const fresh = cardEl(d);
+    if(fresh && fresh.focus) fresh.focus();
+  }
+  return true;
+}
+
+function itemFromTarget(target){
   const card = target && target.closest ? target.closest('.card.craftable') : null;
-  if(!card) return false;
-  const name = card.getAttribute('data-item');
-  if(!name) return false;
-  if(state.openRecipes.has(name)){
-    state.openRecipes.delete(name);
+  if(!card) return null;
+  const key = Number(card.getAttribute('data-key'));
+  return Number.isNaN(key) ? null : { card, d: DATA[key], key };
+}
+
+function toggleCraft(target){
+  const hit = itemFromTarget(target);
+  if(!hit || !hit.d) return false;
+  const { card, d, key } = hit;
+  if(state.openRecipes.has(key)){
+    state.openRecipes.delete(key);
   }else{
     // Measure BEFORE the swap: this is the stat view's own height, and the open
     // card is pinned to it. offsetHeight is 0 in a stub DOM, so the pin is simply
     // skipped there rather than writing height:0px.
     const h = card.offsetHeight || 0;
-    if(h) state.cardHeights[name] = h;
-    state.openRecipes.add(name);
+    if(h) state.cardHeights[key] = h;
+    state.openRecipes.add(key);
   }
-  render({ keepPainted: true });
+  if(!patchCard(d)) render({ keepPainted: true });
   return true;
 }
 
@@ -1238,16 +1305,16 @@ function toggleCraft(target){
 // ingredient lists is handled here and nowhere else.
 function craftPick(target){
   const box = target && target.closest ? target.closest('input[type=checkbox]') : null;
-  const card = target && target.closest ? target.closest('.card.craftable') : null;
-  if(!box || !card) return false;
-  const name = card.getAttribute('data-item');
+  const hit = itemFromTarget(target);
+  if(!box || !hit || !hit.d) return false;
   const idx = Number(box.getAttribute('data-ing'));
-  const sel = state.craftSel[name];
+  const sel = state.craftSel[hit.key];
   if(!sel || Number.isNaN(idx)) return false;
   if(sel.has(idx)) sel.delete(idx); else sel.add(idx);
-  render({ keepPainted: true });
+  if(!patchCraftTotals(hit.d)) render({ keepPainted: true });
   return true;
 }
+
 cardGrid.addEventListener('click', e=>{
   // A click that ends a text selection is the user copying a stat line, not
   // asking to flip the card.
@@ -1427,6 +1494,13 @@ function facetValues(f){
 }
 
 const FACETS = CONFIG.facets.map((f,i)=>({ ...f, id:`facet${i}`, values: facetValues(f) }));
+
+// Cards are identified by their INDEX in DATA, not by name. Names are not unique
+// in every dataset (the Augments tab has two "Potent Manticore Venom", one per
+// faction), and an integer is always safe inside a querySelector -- a selector
+// built from a display name would need CSS.escape and still break on quoting.
+const CARD_KEY = new Map(DATA.map((d, i)=> [d, i]));
+const keyOf = d=> CARD_KEY.get(d);
 
 let state = { searchRows: [{ text: "" }], openRecipes: new Set(),
               craftSel: {}, cardHeights: {} };
@@ -1836,9 +1910,27 @@ const countReadout = document.getElementById('countReadout-mi');
 // scope, and this file's rule is that the two move together.
 function craftSelection(d){
   // Default: everything selected, which reproduces the plain full-recipe view.
-  if(!state.craftSel[d.name]) state.craftSel[d.name] = new Set(d.recipe.direct.map((_g,i)=>i));
-  return state.craftSel[d.name];
+  const k = keyOf(d);
+  if(!state.craftSel[k]) state.craftSel[k] = new Set(d.recipe.direct.map((_g,i)=>i));
+  return state.craftSel[k];
 }
+
+// One definition of a raw row, used by the full render AND by the in-place patch
+// below -- two copies of this markup would drift the moment either changed.
+function craftRawRow(x){
+  return `<li class="craft-row raw">
+        <span class="craft-qty">${x.qty}&times;</span>
+        <span class="craft-name">${escapeHtml(x.name)}</span>
+        ${craftKindChip(x.kind)}
+      </li>`;
+}
+
+function craftRawHtml(totals){
+  return totals.rows.map(craftRawRow).join('')
+    || '<li class="craft-row empty">nothing selected</li>';
+}
+
+function craftIronText(n){ return n.toLocaleString() + ' iron total'; }
 
 function craftTotals(d){
   const sel = craftSelection(d);
@@ -1878,12 +1970,7 @@ function renderCraft(d){
           ${g.craftable ? '<span class="craft-kind craftable">craftable</span>' : ''}
         </label>
       </li>`).join('');
-  const raw = totals.rows.map(x=>`
-      <li class="craft-row raw">
-        <span class="craft-qty">${x.qty}&times;</span>
-        <span class="craft-name">${escapeHtml(x.name)}</span>
-        ${craftKindChip(x.kind)}
-      </li>`).join('');
+  const raw = craftRawHtml(totals);
   return `<div class="craft-view">
       <div class="craft-head">
         <span class="craft-label">Crafting</span>
@@ -1898,8 +1985,12 @@ function renderCraft(d){
         </div>
         <div class="craft-col">
           <h4>Net raw materials</h4>
-          <ul class="craft-list">${raw || '<li class="craft-row empty">nothing selected</li>'}</ul>
-          <div class="craft-total">${iron(totals.iron)} total</div>
+          <!-- .craft-raw / .craft-total-raw are the ONLY two nodes a checkbox
+               tick changes; patchCraftTotals() rewrites exactly these, which is
+               why the direct list (and the input you just clicked, and its
+               focus) is left alone. -->
+          <ul class="craft-list craft-raw">${raw}</ul>
+          <div class="craft-total craft-total-raw">${craftIronText(totals.iron)}</div>
         </div>
       </div>
     </div>`;
@@ -2049,13 +2140,14 @@ function cardHtml(d){
     // A card is only interactive when it HAS a recipe -- no pointer, no tab stop
     // and no handler on the other 900, so the view can never open empty.
     const craftable = !!d.recipe;
-    const open = craftable && state.openRecipes.has(d.name);
+    const key = keyOf(d);
+    const open = craftable && state.openRecipes.has(key);
     const cardAttrs = craftable
-      ? ` class="card craftable${open ? ' open' : ''}" data-item="${escapeAttr(d.name)}"`
+      ? ` class="card craftable${open ? ' open' : ''}" data-key="${key}" data-item="${escapeAttr(d.name)}"`
         // Height is pinned to what the STAT view measured at the moment of
         // opening, so flipping a card never reflows the grid around it. The
         // crafting body scrolls inside that box when it is the taller of the two.
-        + (open && state.cardHeights[d.name] ? ` style="height:${state.cardHeights[d.name]}px"` : '')
+        + (open && state.cardHeights[key] ? ` style="height:${state.cardHeights[key]}px"` : '')
         + ` role="button" tabindex="0" aria-expanded="${open}"`
         + ` title="${open ? 'Click to show stats' : 'Click to show the crafting recipe'}"`
       : ' class="card"';
@@ -2087,22 +2179,64 @@ function cardHtml(d){
 // every keystroke and per-card listeners would be re-bound (or leak) each time.
 // Keyboard included: the card carries role="button"/tabindex, so it must answer
 // Enter and Space like one.
-function toggleCraft(target){
+// --- In-place card updates -------------------------------------------------
+// Both interactions change exactly ONE card. Re-rendering the grid for them
+// costs ~21ms once the whole list is painted (and a full DOM reparse on top of
+// that in a browser), against 0.004ms to rebuild the one card that moved. Every
+// patch falls back to a full render if its target is not in the DOM -- correct
+// and slow beats silently stale.
+function cardEl(d){
+  return cardGrid.querySelector ? cardGrid.querySelector(`.card.craftable[data-key="${keyOf(d)}"]`) : null;
+}
+
+function patchCraftTotals(d){
+  const card = cardEl(d);
+  const list = card && card.querySelector && card.querySelector('.craft-raw');
+  const total = card && card.querySelector && card.querySelector('.craft-total-raw');
+  if(!list || !total) return false;
+  const totals = craftTotals(d);
+  list.innerHTML = craftRawHtml(totals);
+  total.textContent = craftIronText(totals.iron);
+  return true;
+}
+
+function patchCard(d){
+  const card = cardEl(d);
+  if(!card || typeof card.outerHTML !== 'string') return false;
+  // The card carries role="button"/tabindex, so a keyboard user can be standing
+  // on it when it is replaced. outerHTML discards the element, so focus has to be
+  // put back on its replacement.
+  const hadFocus = typeof document !== 'undefined' && document.activeElement === card;
+  card.outerHTML = cardHtml(d);
+  if(hadFocus){
+    const fresh = cardEl(d);
+    if(fresh && fresh.focus) fresh.focus();
+  }
+  return true;
+}
+
+function itemFromTarget(target){
   const card = target && target.closest ? target.closest('.card.craftable') : null;
-  if(!card) return false;
-  const name = card.getAttribute('data-item');
-  if(!name) return false;
-  if(state.openRecipes.has(name)){
-    state.openRecipes.delete(name);
+  if(!card) return null;
+  const key = Number(card.getAttribute('data-key'));
+  return Number.isNaN(key) ? null : { card, d: DATA[key], key };
+}
+
+function toggleCraft(target){
+  const hit = itemFromTarget(target);
+  if(!hit || !hit.d) return false;
+  const { card, d, key } = hit;
+  if(state.openRecipes.has(key)){
+    state.openRecipes.delete(key);
   }else{
     // Measure BEFORE the swap: this is the stat view's own height, and the open
     // card is pinned to it. offsetHeight is 0 in a stub DOM, so the pin is simply
     // skipped there rather than writing height:0px.
     const h = card.offsetHeight || 0;
-    if(h) state.cardHeights[name] = h;
-    state.openRecipes.add(name);
+    if(h) state.cardHeights[key] = h;
+    state.openRecipes.add(key);
   }
-  render({ keepPainted: true });
+  if(!patchCard(d)) render({ keepPainted: true });
   return true;
 }
 
@@ -2110,16 +2244,16 @@ function toggleCraft(target){
 // ingredient lists is handled here and nowhere else.
 function craftPick(target){
   const box = target && target.closest ? target.closest('input[type=checkbox]') : null;
-  const card = target && target.closest ? target.closest('.card.craftable') : null;
-  if(!box || !card) return false;
-  const name = card.getAttribute('data-item');
+  const hit = itemFromTarget(target);
+  if(!box || !hit || !hit.d) return false;
   const idx = Number(box.getAttribute('data-ing'));
-  const sel = state.craftSel[name];
+  const sel = state.craftSel[hit.key];
   if(!sel || Number.isNaN(idx)) return false;
   if(sel.has(idx)) sel.delete(idx); else sel.add(idx);
-  render({ keepPainted: true });
+  if(!patchCraftTotals(hit.d)) render({ keepPainted: true });
   return true;
 }
+
 cardGrid.addEventListener('click', e=>{
   // A click that ends a text selection is the user copying a stat line, not
   // asking to flip the card.
@@ -2316,6 +2450,13 @@ function facetValues(f){
 }
 
 const FACETS = CONFIG.facets.map((f,i)=>({ ...f, id:`facet${i}`, values: facetValues(f) }));
+
+// Cards are identified by their INDEX in DATA, not by name. Names are not unique
+// in every dataset (the Augments tab has two "Potent Manticore Venom", one per
+// faction), and an integer is always safe inside a querySelector -- a selector
+// built from a display name would need CSS.escape and still break on quoting.
+const CARD_KEY = new Map(DATA.map((d, i)=> [d, i]));
+const keyOf = d=> CARD_KEY.get(d);
 
 let state = { searchRows: [{ text: "" }], openRecipes: new Set(),
               craftSel: {}, cardHeights: {} };
@@ -2725,9 +2866,27 @@ const countReadout = document.getElementById('countReadout-craftable');
 // scope, and this file's rule is that the two move together.
 function craftSelection(d){
   // Default: everything selected, which reproduces the plain full-recipe view.
-  if(!state.craftSel[d.name]) state.craftSel[d.name] = new Set(d.recipe.direct.map((_g,i)=>i));
-  return state.craftSel[d.name];
+  const k = keyOf(d);
+  if(!state.craftSel[k]) state.craftSel[k] = new Set(d.recipe.direct.map((_g,i)=>i));
+  return state.craftSel[k];
 }
+
+// One definition of a raw row, used by the full render AND by the in-place patch
+// below -- two copies of this markup would drift the moment either changed.
+function craftRawRow(x){
+  return `<li class="craft-row raw">
+        <span class="craft-qty">${x.qty}&times;</span>
+        <span class="craft-name">${escapeHtml(x.name)}</span>
+        ${craftKindChip(x.kind)}
+      </li>`;
+}
+
+function craftRawHtml(totals){
+  return totals.rows.map(craftRawRow).join('')
+    || '<li class="craft-row empty">nothing selected</li>';
+}
+
+function craftIronText(n){ return n.toLocaleString() + ' iron total'; }
 
 function craftTotals(d){
   const sel = craftSelection(d);
@@ -2767,12 +2926,7 @@ function renderCraft(d){
           ${g.craftable ? '<span class="craft-kind craftable">craftable</span>' : ''}
         </label>
       </li>`).join('');
-  const raw = totals.rows.map(x=>`
-      <li class="craft-row raw">
-        <span class="craft-qty">${x.qty}&times;</span>
-        <span class="craft-name">${escapeHtml(x.name)}</span>
-        ${craftKindChip(x.kind)}
-      </li>`).join('');
+  const raw = craftRawHtml(totals);
   return `<div class="craft-view">
       <div class="craft-head">
         <span class="craft-label">Crafting</span>
@@ -2787,8 +2941,12 @@ function renderCraft(d){
         </div>
         <div class="craft-col">
           <h4>Net raw materials</h4>
-          <ul class="craft-list">${raw || '<li class="craft-row empty">nothing selected</li>'}</ul>
-          <div class="craft-total">${iron(totals.iron)} total</div>
+          <!-- .craft-raw / .craft-total-raw are the ONLY two nodes a checkbox
+               tick changes; patchCraftTotals() rewrites exactly these, which is
+               why the direct list (and the input you just clicked, and its
+               focus) is left alone. -->
+          <ul class="craft-list craft-raw">${raw}</ul>
+          <div class="craft-total craft-total-raw">${craftIronText(totals.iron)}</div>
         </div>
       </div>
     </div>`;
@@ -2938,13 +3096,14 @@ function cardHtml(d){
     // A card is only interactive when it HAS a recipe -- no pointer, no tab stop
     // and no handler on the other 900, so the view can never open empty.
     const craftable = !!d.recipe;
-    const open = craftable && state.openRecipes.has(d.name);
+    const key = keyOf(d);
+    const open = craftable && state.openRecipes.has(key);
     const cardAttrs = craftable
-      ? ` class="card craftable${open ? ' open' : ''}" data-item="${escapeAttr(d.name)}"`
+      ? ` class="card craftable${open ? ' open' : ''}" data-key="${key}" data-item="${escapeAttr(d.name)}"`
         // Height is pinned to what the STAT view measured at the moment of
         // opening, so flipping a card never reflows the grid around it. The
         // crafting body scrolls inside that box when it is the taller of the two.
-        + (open && state.cardHeights[d.name] ? ` style="height:${state.cardHeights[d.name]}px"` : '')
+        + (open && state.cardHeights[key] ? ` style="height:${state.cardHeights[key]}px"` : '')
         + ` role="button" tabindex="0" aria-expanded="${open}"`
         + ` title="${open ? 'Click to show stats' : 'Click to show the crafting recipe'}"`
       : ' class="card"';
@@ -2976,22 +3135,64 @@ function cardHtml(d){
 // every keystroke and per-card listeners would be re-bound (or leak) each time.
 // Keyboard included: the card carries role="button"/tabindex, so it must answer
 // Enter and Space like one.
-function toggleCraft(target){
+// --- In-place card updates -------------------------------------------------
+// Both interactions change exactly ONE card. Re-rendering the grid for them
+// costs ~21ms once the whole list is painted (and a full DOM reparse on top of
+// that in a browser), against 0.004ms to rebuild the one card that moved. Every
+// patch falls back to a full render if its target is not in the DOM -- correct
+// and slow beats silently stale.
+function cardEl(d){
+  return cardGrid.querySelector ? cardGrid.querySelector(`.card.craftable[data-key="${keyOf(d)}"]`) : null;
+}
+
+function patchCraftTotals(d){
+  const card = cardEl(d);
+  const list = card && card.querySelector && card.querySelector('.craft-raw');
+  const total = card && card.querySelector && card.querySelector('.craft-total-raw');
+  if(!list || !total) return false;
+  const totals = craftTotals(d);
+  list.innerHTML = craftRawHtml(totals);
+  total.textContent = craftIronText(totals.iron);
+  return true;
+}
+
+function patchCard(d){
+  const card = cardEl(d);
+  if(!card || typeof card.outerHTML !== 'string') return false;
+  // The card carries role="button"/tabindex, so a keyboard user can be standing
+  // on it when it is replaced. outerHTML discards the element, so focus has to be
+  // put back on its replacement.
+  const hadFocus = typeof document !== 'undefined' && document.activeElement === card;
+  card.outerHTML = cardHtml(d);
+  if(hadFocus){
+    const fresh = cardEl(d);
+    if(fresh && fresh.focus) fresh.focus();
+  }
+  return true;
+}
+
+function itemFromTarget(target){
   const card = target && target.closest ? target.closest('.card.craftable') : null;
-  if(!card) return false;
-  const name = card.getAttribute('data-item');
-  if(!name) return false;
-  if(state.openRecipes.has(name)){
-    state.openRecipes.delete(name);
+  if(!card) return null;
+  const key = Number(card.getAttribute('data-key'));
+  return Number.isNaN(key) ? null : { card, d: DATA[key], key };
+}
+
+function toggleCraft(target){
+  const hit = itemFromTarget(target);
+  if(!hit || !hit.d) return false;
+  const { card, d, key } = hit;
+  if(state.openRecipes.has(key)){
+    state.openRecipes.delete(key);
   }else{
     // Measure BEFORE the swap: this is the stat view's own height, and the open
     // card is pinned to it. offsetHeight is 0 in a stub DOM, so the pin is simply
     // skipped there rather than writing height:0px.
     const h = card.offsetHeight || 0;
-    if(h) state.cardHeights[name] = h;
-    state.openRecipes.add(name);
+    if(h) state.cardHeights[key] = h;
+    state.openRecipes.add(key);
   }
-  render({ keepPainted: true });
+  if(!patchCard(d)) render({ keepPainted: true });
   return true;
 }
 
@@ -2999,16 +3200,16 @@ function toggleCraft(target){
 // ingredient lists is handled here and nowhere else.
 function craftPick(target){
   const box = target && target.closest ? target.closest('input[type=checkbox]') : null;
-  const card = target && target.closest ? target.closest('.card.craftable') : null;
-  if(!box || !card) return false;
-  const name = card.getAttribute('data-item');
+  const hit = itemFromTarget(target);
+  if(!box || !hit || !hit.d) return false;
   const idx = Number(box.getAttribute('data-ing'));
-  const sel = state.craftSel[name];
+  const sel = state.craftSel[hit.key];
   if(!sel || Number.isNaN(idx)) return false;
   if(sel.has(idx)) sel.delete(idx); else sel.add(idx);
-  render({ keepPainted: true });
+  if(!patchCraftTotals(hit.d)) render({ keepPainted: true });
   return true;
 }
+
 cardGrid.addEventListener('click', e=>{
   // A click that ends a text selection is the user copying a stat line, not
   // asking to flip the card.
