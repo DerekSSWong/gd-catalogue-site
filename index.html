@@ -81,7 +81,13 @@
      Where 490px comes from: a lane column on the affix tab at full width.
      .wrap.lanes-wide is 1560, less 40 wrap padding, less 28 sidebar padding and
      2 border = 1490, split into 3 columns with two 10px gaps -> 490. */
-  .search-bar-row .search-box{ flex: 1; max-width: 490px; }
+
+  /* THE WIDTH MUST SIT ON THIS WRAPPER, NOT ON THE .search-box INSIDE IT.
+     #searchRowFirst is the flex ITEM of .search-bar-row; the .search-box is its
+     child and therefore not a flex item of that row at all, so `flex: 1` there
+     is ignored and the wrapper collapses to the input's intrinsic ~200px. That
+     is why the bar stayed small no matter what was set on .search-box. */
+  .search-primary{ flex: 1; max-width: 490px; min-width: 0; }
   .filter-toggle-btn{
     flex: none;
     cursor: pointer;
@@ -1048,7 +1054,7 @@ function renderSearchRows(){
   // ALWAYS-VISIBLE BAR. In lane mode this is the ONE global box that searches
   // all three columns; the per-lane boxes live in the expandable panel below.
   // In single-list mode it is the catalogue's only box, unchanged.
-  searchRow0El.className = '';
+  searchRow0El.className = 'search-primary';
   const primary = LANE_MODE ? state.global[0] : state.lanes[LANES[0].id][0];
   const primaryScope = LANE_MODE ? 'global' : LANES[0].id;
   searchRow0El.innerHTML = `<div class="search-box">${SEARCH_ICON}<input type="text" id="searchInput0-augments" data-scope="${
@@ -2265,7 +2271,7 @@ function renderSearchRows(){
   // ALWAYS-VISIBLE BAR. In lane mode this is the ONE global box that searches
   // all three columns; the per-lane boxes live in the expandable panel below.
   // In single-list mode it is the catalogue's only box, unchanged.
-  searchRow0El.className = '';
+  searchRow0El.className = 'search-primary';
   const primary = LANE_MODE ? state.global[0] : state.lanes[LANES[0].id][0];
   const primaryScope = LANE_MODE ? 'global' : LANES[0].id;
   searchRow0El.innerHTML = `<div class="search-box">${SEARCH_ICON}<input type="text" id="searchInput0-mi" data-scope="${
@@ -3499,7 +3505,7 @@ function renderSearchRows(){
   // ALWAYS-VISIBLE BAR. In lane mode this is the ONE global box that searches
   // all three columns; the per-lane boxes live in the expandable panel below.
   // In single-list mode it is the catalogue's only box, unchanged.
-  searchRow0El.className = '';
+  searchRow0El.className = 'search-primary';
   const primary = LANE_MODE ? state.global[0] : state.lanes[LANES[0].id][0];
   const primaryScope = LANE_MODE ? 'global' : LANES[0].id;
   searchRow0El.innerHTML = `<div class="search-box">${SEARCH_ICON}<input type="text" id="searchInput0-craftable" data-scope="${
@@ -4735,7 +4741,7 @@ function renderSearchRows(){
   // ALWAYS-VISIBLE BAR. In lane mode this is the ONE global box that searches
   // all three columns; the per-lane boxes live in the expandable panel below.
   // In single-list mode it is the catalogue's only box, unchanged.
-  searchRow0El.className = '';
+  searchRow0El.className = 'search-primary';
   const primary = LANE_MODE ? state.global[0] : state.lanes[LANES[0].id][0];
   const primaryScope = LANE_MODE ? 'global' : LANES[0].id;
   searchRow0El.innerHTML = `<div class="search-box">${SEARCH_ICON}<input type="text" id="searchInput0-affix" data-scope="${
