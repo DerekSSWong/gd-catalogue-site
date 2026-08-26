@@ -74,7 +74,14 @@
     display: flex; flex-direction: column; gap: 18px;
   }
   .search-bar-row{ display: flex; align-items: center; gap: 8px; }
-  .search-bar-row .search-box{ flex: 1; }
+  /* SEARCH BOX WIDTHS ARE WRITTEN OUT PER CONTEXT, ON PURPOSE.
+     Not a shared variable and not one selector list: each of these is expected
+     to be tuned on its own later, and changing one must not silently move the
+     others. Keep them literal even when the numbers happen to match.
+     Where 490px comes from: a lane column on the affix tab at full width.
+     .wrap.lanes-wide is 1560, less 40 wrap padding, less 28 sidebar padding and
+     2 border = 1490, split into 3 columns with two 10px gaps -> 490. */
+  .search-bar-row .search-box{ flex: 1; max-width: 490px; }
   .filter-toggle-btn{
     flex: none;
     cursor: pointer;
@@ -92,8 +99,14 @@
   .filter-expand{ display: flex; flex-direction: column; gap: 18px; }
   .filter-expand[hidden]{ display: none; }
   .search-block{ display: flex; flex-direction: column; gap: 10px; }
-  #searchRows{ display: flex; flex-direction: column; gap: 10px; }
+  /* CLASS, not #searchRows. The shell renames that id per panel
+     (searchRows-augments, ...), so the id form matched nothing on the published
+     page and these rows lost their gap. It was the stylesheet's only id-based
+     selector, which is why "CSS keys off classes, not ids" held everywhere else. */
+  .search-rows{ display: flex; flex-direction: column; gap: 10px; }
   .search-row{ display: flex; align-items: center; gap: 5px; }
+  /* Extra AND/OR/NOT rows on a single-list catalogue. Own literal (see above). */
+  .search-rows .search-box{ max-width: 490px; }
   .search-op{
     flex: none; width: 58px; font-family: "IBM Plex Mono", monospace; font-size: 10.5px;
     font-weight: 600; letter-spacing: 0.03em; text-align: center;
@@ -416,6 +429,8 @@
     padding-bottom: 12px; border-bottom: 1px solid var(--line);
   }
   .global-extra .search-add{ margin-top: 0; align-self: flex-start; }
+  /* Extra rows on the affix tab's all-columns bar. Own literal (see above). */
+  .global-extra .search-box{ max-width: 490px; }
   /* Each lane column leads with its own label + box, then its extra rows. */
   .lane-extra .lane-search-label{ margin-bottom: -2px; }
   .lane-extra{ display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -1041,7 +1056,7 @@ function renderSearchRows(){
     escapeAttr(LANE_MODE ? 'Search all three columns…' : (LANES[0].placeholder || 'Search…'))
     }" autocomplete="off"></div>`;
 
-  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
+  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : 'search-rows';
   searchRowsEl.innerHTML = LANES.map(l=>{
     // Lane mode: this lane's OWN primary box heads its column, above its extra
     // rows. Single-list mode: row 0 is the always-visible box above, so the
@@ -2258,7 +2273,7 @@ function renderSearchRows(){
     escapeAttr(LANE_MODE ? 'Search all three columns…' : (LANES[0].placeholder || 'Search…'))
     }" autocomplete="off"></div>`;
 
-  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
+  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : 'search-rows';
   searchRowsEl.innerHTML = LANES.map(l=>{
     // Lane mode: this lane's OWN primary box heads its column, above its extra
     // rows. Single-list mode: row 0 is the always-visible box above, so the
@@ -3492,7 +3507,7 @@ function renderSearchRows(){
     escapeAttr(LANE_MODE ? 'Search all three columns…' : (LANES[0].placeholder || 'Search…'))
     }" autocomplete="off"></div>`;
 
-  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
+  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : 'search-rows';
   searchRowsEl.innerHTML = LANES.map(l=>{
     // Lane mode: this lane's OWN primary box heads its column, above its extra
     // rows. Single-list mode: row 0 is the always-visible box above, so the
@@ -4728,7 +4743,7 @@ function renderSearchRows(){
     escapeAttr(LANE_MODE ? 'Search all three columns…' : (LANES[0].placeholder || 'Search…'))
     }" autocomplete="off"></div>`;
 
-  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
+  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : 'search-rows';
   searchRowsEl.innerHTML = LANES.map(l=>{
     // Lane mode: this lane's OWN primary box heads its column, above its extra
     // rows. Single-list mode: row 0 is the always-visible box above, so the
