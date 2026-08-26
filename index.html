@@ -391,29 +391,35 @@
      only on the panel that asked for them. */
   .wrap.lanes-wide, .masthead-inner.lanes-wide{ max-width: 1560px; }
 
-  /* One search box per lane, side by side in the same grid the card columns
-     use below, so each box sits visually over its own column. */
-  .lane-search-row{
-    display: grid; grid-template-columns: repeat(3, minmax(0,1fr));
-    gap: 10px; flex: 1; min-width: 0;
-  }
-  .lane-search{ display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  /* Column heading above each lane's own search box, inside the expandable
+     panel. (.lane-search-row / .lane-search were removed 2026-08-26 when the
+     three boxes moved out of the always-visible bar and the single global box
+     took their place there -- nothing applied those classes any more.) */
   .lane-search-label{
     font-family: "IBM Plex Mono", monospace; font-size: 9.5px;
     letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-faint);
   }
-  /* .lane-search-row above sits in a flex row alongside the two 38px toggle
-     buttons (search-bar-row's own 8px gap x2 + 38px x2 = 92px reserved), so its
-     3 columns are narrower than a plain full-width 3-column grid. This row must
-     reserve the identical 92px or its column boundaries drift right of the
-     search row's above -- invisibly for column 1 (both start at x:0) but
-     visibly for columns 2-3, which is exactly the "Add term" misalignment
-     reported for Item Base/Suffix and not Prefix. */
+  /* Full width, deliberately. This row USED to reserve 92px (the two 38px
+     toggle buttons plus search-bar-row's gaps) so its columns lined up with the
+     three lane boxes sitting above it in that flex row. Those boxes now live
+     INSIDE this panel -- there is nothing above to align to any more, and
+     keeping the reservation would indent the whole grid for no reason. */
   .lane-extra-row{
     display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 18px 10px;
-    width: calc(100% - 92px);
+    width: 100%;
   }
+  /* The global bar's extra AND/OR/NOT rows span the full width above the three
+     lane columns, so it reads as "this applies to everything below". Spanning
+     every grid column keeps it in the same grid rather than needing a wrapper. */
+  .global-extra{
+    grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--line);
+  }
+  .global-extra .search-add{ margin-top: 0; align-self: flex-start; }
+  /* Each lane column leads with its own label + box, then its extra rows. */
+  .lane-extra .lane-search-label{ margin-bottom: -2px; }
   .lane-extra{ display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .lane-extra > .search-box{ margin-top: -2px; }
   .lane-extra .search-add{ margin-top: 0; }
 
   .lanes{
@@ -480,7 +486,7 @@
   }
 
   @media (max-width: 1040px){
-    .lanes, .lane-search-row, .lane-extra-row{ grid-template-columns: 1fr; }
+    .lanes, .lane-extra-row{ grid-template-columns: 1fr; }
     .lane-extra-row{ width: 100%; }
     .lane-head{ position: static; }
   }
@@ -733,10 +739,15 @@ const FACETS = CONFIG.facets.map((f,i)=>({ ...f, id:`facet${i}`, values: facetVa
 const CARD_KEY = new Map(DATA.map((d, i)=> [d, i]));
 const keyOf = d=> CARD_KEY.get(d);
 
-let state = { lanes: {}, openRecipes: new Set(),
+let state = { lanes: {}, global: [{ text: "" }], openRecipes: new Set(),
               craftSel: {}, cardHeights: {} };
 // One independent list of search rows per lane. Single-list catalogues have
 // exactly one, keyed by the empty string.
+// `state.global` is the LANE-MODE-ONLY bar that narrows every lane at once. It
+// is kept separate rather than modelled as another lane, because a pseudo-lane
+// id would leak into LANES and from there into the lane scaffold, LANE_TOTALS
+// and the per-lane counts. Unused in single-list mode, where the one lane's own
+// rows already are the whole query.
 LANES.forEach(l=>{ state.lanes[l.id] = [{ text: "" }]; });
 FACETS.forEach(f=>{ state[f.id] = new Set(f.values); });
 
@@ -834,6 +845,7 @@ FACETS.forEach(f=>{
 
 function clearAllFilters(){
   LANES.forEach(l=>{ state.lanes[l.id] = [{ text: "" }]; });
+  state.global = [{ text: "" }];
   renderSearchRows();
   FACETS.forEach(f=>{
     state[f.id] = new Set(f.values);
@@ -928,7 +940,10 @@ let searchCacheKey = '';
 // whole-word toggle, a case-sensitivity flag), it belongs here too -- forgetting
 // it does not crash, it silently serves the previous query's answers.
 function syncSearchCache(){
-  const key = JSON.stringify(LANES.map(l=> state.lanes[l.id].map(r=>[r.text, r.op])));
+  const key = JSON.stringify([
+    state.global.map(r=>[r.text, r.op]),
+    LANES.map(l=> state.lanes[l.id].map(r=>[r.text, r.op])),
+  ]);
   if(key !== searchCacheKey){ searchCacheKey = key; searchCache = new Map(); }
 }
 
@@ -938,12 +953,13 @@ function searchVerdict(d){
   return v;
 }
 
-// An item is only ever tested against its OWN lane's search rows.
-function passesSearch(d){
-  const rows = (state.lanes[laneOf(d)] || []).filter(r=>r.text.trim() !== '');
-  if(rows.length === 0) return true;
+// Evaluate one list of AND/OR/NOT rows against an item. Empty list -> no
+// opinion (true), so an unused half never narrows anything.
+function rowsMatch(d, rows){
+  const live = rows.filter(r=>r.text.trim() !== '');
+  if(live.length === 0) return true;
   let result = null;
-  rows.forEach((row, i)=>{
+  live.forEach((row, i)=>{
     const m = termMatches(d, row.text.trim());
     if(i === 0){ result = m; return; }
     if(row.op === 'OR') result = result || m;
@@ -951,6 +967,14 @@ function passesSearch(d){
     else result = result && m; // default/AND
   });
   return result;
+}
+
+// An item is tested against the GLOBAL rows and its OWN lane's rows, ANDed.
+// AND, not OR: the big bar is a coarse filter across all three columns and each
+// lane's own box narrows within it. OR would make typing in the big bar WIDEN
+// the results, which reads as broken.
+function passesSearch(d){
+  return rowsMatch(d, state.global) && rowsMatch(d, state.lanes[laneOf(d)] || []);
 }
 
 // Faceted counts: for each facet, count items matching the search text and
@@ -979,84 +1003,113 @@ const searchRow0El = document.getElementById('searchRowFirst-augments');
 const searchRowsEl = document.getElementById('searchRows-augments');
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
 
-// ONE implementation for both layouts: every input carries data-lane/data-idx
+// ONE implementation for both layouts: every input carries data-scope/data-idx
 // and one listener reads them, rather than a lane branch keeping two near-copies
-// of the AND/OR/NOT plumbing in sync. A single-list catalogue is the N=1 case --
-// its markup gains the two data attributes and is otherwise what it always was.
-//
-// SCOPED TO THIS PANEL'S OWN TWO CONTAINERS, never document.querySelectorAll:
-// in the shell four panels share one document, so a document-level query would
-// wire this panel's handlers onto the other three tabs' inputs.
-function renderSearchRows(){
-  searchRow0El.className = LANE_MODE ? 'lane-search-row' : '';
-  searchRow0El.innerHTML = LANES.map(l=>{
-    const first = state.lanes[l.id][0];
-    const box = `<div class="search-box">${SEARCH_ICON}<input type="text"${
-      LANE_MODE ? '' : ' id="searchInput0-augments"'} data-lane="${escapeAttr(l.id)}" data-idx="0" value="${
-      escapeHtml(first.text)}" placeholder="${escapeAttr(l.placeholder || 'Search…')}" autocomplete="off"></div>`;
-    return LANE_MODE
-      ? `<div class="lane-search"><span class="lane-search-label">${escapeHtml(l.label)}</span>${box}</div>`
-      : box;
-  }).join('');
-
-  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
-  searchRowsEl.innerHTML = LANES.map(l=>{
-    const extra = state.lanes[l.id].slice(1).map((row, idx)=>{
-      const i = idx + 1;
-      return `<div class="search-row">
-      <select class="search-op" data-lane="${escapeAttr(l.id)}" data-idx="${i}">
+// of the AND/OR/NOT plumbing in sync. `scope` is a lane id, or 'global' for the
+// lane-mode bar that searches every column -- rowsFor() maps it to a row list.
+// A single-list catalogue is the N=1 case: one lane, no global bar.
+// Builds one AND/OR/NOT row. `scope` is 'global' or a lane id -- it goes into
+// data-scope and the one input handler reads it back, so both row lists share a
+// single implementation.
+function searchRowHtml(scope, row, i){
+  return `<div class="search-row">
+      <select class="search-op" data-scope="${escapeAttr(scope)}" data-idx="${i}">
         <option value="AND"${row.op!=='OR'&&row.op!=='NOT'?' selected':''}>AND</option>
         <option value="OR"${row.op==='OR'?' selected':''}>OR</option>
         <option value="NOT"${row.op==='NOT'?' selected':''}>NOT</option>
       </select>
-      <div class="search-box">${SEARCH_ICON}<input type="text" data-lane="${escapeAttr(l.id)}" data-idx="${i}" value="${escapeHtml(row.text)}" placeholder="Add term…" autocomplete="off"></div>
-      <button class="search-remove" data-lane="${escapeAttr(l.id)}" data-idx="${i}" title="Remove term">&times;</button>
+      <div class="search-box">${SEARCH_ICON}<input type="text" data-scope="${escapeAttr(scope)}" data-idx="${i}" value="${escapeHtml(row.text)}" placeholder="Add term…" autocomplete="off"></div>
+      <button class="search-remove" data-scope="${escapeAttr(scope)}" data-idx="${i}" title="Remove term">&times;</button>
     </div>`;
-    }).join('');
+}
+
+// The list a data-scope refers to. 'global' is the lane-mode bar that narrows
+// every column; anything else is a lane id.
+function rowsFor(scope){
+  return scope === 'global' ? state.global : state.lanes[scope];
+}
+
+function renderSearchRows(){
+  // ALWAYS-VISIBLE BAR. In lane mode this is the ONE global box that searches
+  // all three columns; the per-lane boxes live in the expandable panel below.
+  // In single-list mode it is the catalogue's only box, unchanged.
+  searchRow0El.className = '';
+  const primary = LANE_MODE ? state.global[0] : state.lanes[LANES[0].id][0];
+  const primaryScope = LANE_MODE ? 'global' : LANES[0].id;
+  searchRow0El.innerHTML = `<div class="search-box">${SEARCH_ICON}<input type="text" id="searchInput0-augments" data-scope="${
+    escapeAttr(primaryScope)}" data-idx="0" value="${escapeHtml(primary.text)}" placeholder="${
+    escapeAttr(LANE_MODE ? 'Search all three columns…' : (LANES[0].placeholder || 'Search…'))
+    }" autocomplete="off"></div>`;
+
+  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
+  searchRowsEl.innerHTML = LANES.map(l=>{
+    // Lane mode: this lane's OWN primary box heads its column, above its extra
+    // rows. Single-list mode: row 0 is the always-visible box above, so the
+    // extras start at index 1 exactly as before.
+    const own = LANE_MODE
+      ? `<span class="lane-search-label">${escapeHtml(l.label)}</span>`
+        + `<div class="search-box">${SEARCH_ICON}<input type="text" data-scope="${escapeAttr(l.id)}" data-idx="0" value="${
+           escapeHtml(state.lanes[l.id][0].text)}" placeholder="${escapeAttr(l.placeholder || 'Search…')}" autocomplete="off"></div>`
+      : '';
+    const extra = state.lanes[l.id].slice(1)
+      .map((row, idx)=> searchRowHtml(l.id, row, idx + 1)).join('');
     return LANE_MODE
-      ? `<div class="lane-extra">${extra}<button class="search-add" data-lane="${escapeAttr(l.id)}">+ Add term</button></div>`
+      ? `<div class="lane-extra">${own}${extra}<button class="search-add" data-scope="${escapeAttr(l.id)}">+ Add term</button></div>`
       : extra;
   }).join('');
 
+  // In lane mode the global bar can also carry extra AND/OR/NOT rows; they sit
+  // above the per-lane columns, in the same panel.
+  if(LANE_MODE){
+    const globalExtra = state.global.slice(1)
+      .map((row, idx)=> searchRowHtml('global', row, idx + 1)).join('');
+    searchRowsEl.insertAdjacentHTML('afterbegin',
+      `<div class="global-extra">${globalExtra}<button class="search-add" data-scope="global">+ Add term to the all-columns search</button></div>`);
+  }
+
+  // SCOPED to this panel's own two containers, never document.querySelectorAll:
+  // in the shell four panels share one document, so a document-level query would
+  // wire this panel's handlers onto the other three tabs' inputs.
   [searchRow0El, searchRowsEl].forEach(box=>{
     box.querySelectorAll('input').forEach(inp=>{
       inp.addEventListener('input', e=>{
-        state.lanes[e.target.dataset.lane][+e.target.dataset.idx].text = e.target.value;
+        rowsFor(e.target.dataset.scope)[+e.target.dataset.idx].text = e.target.value;
         render();
       });
     });
   });
   searchRowsEl.querySelectorAll('.search-op').forEach(sel=>{
     sel.addEventListener('change', e=>{
-      state.lanes[e.target.dataset.lane][+e.target.dataset.idx].op = e.target.value;
+      rowsFor(e.target.dataset.scope)[+e.target.dataset.idx].op = e.target.value;
       render();
     });
   });
   searchRowsEl.querySelectorAll('.search-remove').forEach(btn=>{
     btn.addEventListener('click', e=>{
-      state.lanes[e.target.dataset.lane].splice(+e.target.dataset.idx, 1);
+      rowsFor(e.target.dataset.scope).splice(+e.target.dataset.idx, 1);
       renderSearchRows();
       render();
     });
   });
-  // Lane mode generates one add button per lane; the single-list layout's lives
-  // in markup, outside this container, and is wired once below.
+  // Lane mode generates one add button per lane plus one for the global bar;
+  // the single-list layout's lives in markup, outside this container, and is
+  // wired once below.
   searchRowsEl.querySelectorAll('.search-add').forEach(btn=>{
-    btn.addEventListener('click', e=> addTerm(e.target.dataset.lane));
+    btn.addEventListener('click', e=> addTerm(e.target.dataset.scope));
   });
 }
 
-function addTerm(laneId){
-  state.lanes[laneId].push({ op: 'AND', text: '' });
+function addTerm(scope){
+  rowsFor(scope).push({ op: 'AND', text: '' });
   renderSearchRows();
   const inputs = searchRowsEl.querySelectorAll(
-    LANE_MODE ? `.lane-extra input[data-lane="${laneId}"]` : 'input');
+    LANE_MODE ? `input[data-scope="${scope}"]` : 'input');
   if(inputs.length) inputs[inputs.length-1].focus();
 }
 
 const searchAddBtn = document.getElementById('searchAddBtn-augments');
 if(LANE_MODE) searchAddBtn.style.display = 'none';
-else searchAddBtn.addEventListener('click', ()=> addTerm(''));
+else searchAddBtn.addEventListener('click', ()=> addTerm(LANES[0].id));
 
 renderSearchRows();
 
@@ -1083,7 +1136,11 @@ function highlight(text){
   // actually satisfies that row's full word set (mirrors termMatches' same-line
   // rule) — otherwise "aether resist" would also light up "resist" on an
   // unrelated "+X Cold Resist" line that has nothing to do with the match.
-  const terms = (state.lanes[CUR_LANE] || [])
+  // Global rows are included, because passesSearch() matches on them: a card
+  // found by the big bar must have that term marked like any other. Search
+  // scope and highlight scope move together -- fixing one side alone is a bug
+  // this template has shipped before.
+  const terms = [...state.global, ...(state.lanes[CUR_LANE] || [])]
     .filter(r=>r.text.trim() !== '' && r.op !== 'NOT')
     .flatMap(r=>{
       const { requireFlat, words } = parseSearchWords(r.text.trim());
@@ -1899,10 +1956,15 @@ const FACETS = CONFIG.facets.map((f,i)=>({ ...f, id:`facet${i}`, values: facetVa
 const CARD_KEY = new Map(DATA.map((d, i)=> [d, i]));
 const keyOf = d=> CARD_KEY.get(d);
 
-let state = { lanes: {}, openRecipes: new Set(),
+let state = { lanes: {}, global: [{ text: "" }], openRecipes: new Set(),
               craftSel: {}, cardHeights: {} };
 // One independent list of search rows per lane. Single-list catalogues have
 // exactly one, keyed by the empty string.
+// `state.global` is the LANE-MODE-ONLY bar that narrows every lane at once. It
+// is kept separate rather than modelled as another lane, because a pseudo-lane
+// id would leak into LANES and from there into the lane scaffold, LANE_TOTALS
+// and the per-lane counts. Unused in single-list mode, where the one lane's own
+// rows already are the whole query.
 LANES.forEach(l=>{ state.lanes[l.id] = [{ text: "" }]; });
 FACETS.forEach(f=>{ state[f.id] = new Set(f.values); });
 
@@ -2000,6 +2062,7 @@ FACETS.forEach(f=>{
 
 function clearAllFilters(){
   LANES.forEach(l=>{ state.lanes[l.id] = [{ text: "" }]; });
+  state.global = [{ text: "" }];
   renderSearchRows();
   FACETS.forEach(f=>{
     state[f.id] = new Set(f.values);
@@ -2094,7 +2157,10 @@ let searchCacheKey = '';
 // whole-word toggle, a case-sensitivity flag), it belongs here too -- forgetting
 // it does not crash, it silently serves the previous query's answers.
 function syncSearchCache(){
-  const key = JSON.stringify(LANES.map(l=> state.lanes[l.id].map(r=>[r.text, r.op])));
+  const key = JSON.stringify([
+    state.global.map(r=>[r.text, r.op]),
+    LANES.map(l=> state.lanes[l.id].map(r=>[r.text, r.op])),
+  ]);
   if(key !== searchCacheKey){ searchCacheKey = key; searchCache = new Map(); }
 }
 
@@ -2104,12 +2170,13 @@ function searchVerdict(d){
   return v;
 }
 
-// An item is only ever tested against its OWN lane's search rows.
-function passesSearch(d){
-  const rows = (state.lanes[laneOf(d)] || []).filter(r=>r.text.trim() !== '');
-  if(rows.length === 0) return true;
+// Evaluate one list of AND/OR/NOT rows against an item. Empty list -> no
+// opinion (true), so an unused half never narrows anything.
+function rowsMatch(d, rows){
+  const live = rows.filter(r=>r.text.trim() !== '');
+  if(live.length === 0) return true;
   let result = null;
-  rows.forEach((row, i)=>{
+  live.forEach((row, i)=>{
     const m = termMatches(d, row.text.trim());
     if(i === 0){ result = m; return; }
     if(row.op === 'OR') result = result || m;
@@ -2117,6 +2184,14 @@ function passesSearch(d){
     else result = result && m; // default/AND
   });
   return result;
+}
+
+// An item is tested against the GLOBAL rows and its OWN lane's rows, ANDed.
+// AND, not OR: the big bar is a coarse filter across all three columns and each
+// lane's own box narrows within it. OR would make typing in the big bar WIDEN
+// the results, which reads as broken.
+function passesSearch(d){
+  return rowsMatch(d, state.global) && rowsMatch(d, state.lanes[laneOf(d)] || []);
 }
 
 // Faceted counts: for each facet, count items matching the search text and
@@ -2145,84 +2220,113 @@ const searchRow0El = document.getElementById('searchRowFirst-mi');
 const searchRowsEl = document.getElementById('searchRows-mi');
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
 
-// ONE implementation for both layouts: every input carries data-lane/data-idx
+// ONE implementation for both layouts: every input carries data-scope/data-idx
 // and one listener reads them, rather than a lane branch keeping two near-copies
-// of the AND/OR/NOT plumbing in sync. A single-list catalogue is the N=1 case --
-// its markup gains the two data attributes and is otherwise what it always was.
-//
-// SCOPED TO THIS PANEL'S OWN TWO CONTAINERS, never document.querySelectorAll:
-// in the shell four panels share one document, so a document-level query would
-// wire this panel's handlers onto the other three tabs' inputs.
-function renderSearchRows(){
-  searchRow0El.className = LANE_MODE ? 'lane-search-row' : '';
-  searchRow0El.innerHTML = LANES.map(l=>{
-    const first = state.lanes[l.id][0];
-    const box = `<div class="search-box">${SEARCH_ICON}<input type="text"${
-      LANE_MODE ? '' : ' id="searchInput0-mi"'} data-lane="${escapeAttr(l.id)}" data-idx="0" value="${
-      escapeHtml(first.text)}" placeholder="${escapeAttr(l.placeholder || 'Search…')}" autocomplete="off"></div>`;
-    return LANE_MODE
-      ? `<div class="lane-search"><span class="lane-search-label">${escapeHtml(l.label)}</span>${box}</div>`
-      : box;
-  }).join('');
-
-  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
-  searchRowsEl.innerHTML = LANES.map(l=>{
-    const extra = state.lanes[l.id].slice(1).map((row, idx)=>{
-      const i = idx + 1;
-      return `<div class="search-row">
-      <select class="search-op" data-lane="${escapeAttr(l.id)}" data-idx="${i}">
+// of the AND/OR/NOT plumbing in sync. `scope` is a lane id, or 'global' for the
+// lane-mode bar that searches every column -- rowsFor() maps it to a row list.
+// A single-list catalogue is the N=1 case: one lane, no global bar.
+// Builds one AND/OR/NOT row. `scope` is 'global' or a lane id -- it goes into
+// data-scope and the one input handler reads it back, so both row lists share a
+// single implementation.
+function searchRowHtml(scope, row, i){
+  return `<div class="search-row">
+      <select class="search-op" data-scope="${escapeAttr(scope)}" data-idx="${i}">
         <option value="AND"${row.op!=='OR'&&row.op!=='NOT'?' selected':''}>AND</option>
         <option value="OR"${row.op==='OR'?' selected':''}>OR</option>
         <option value="NOT"${row.op==='NOT'?' selected':''}>NOT</option>
       </select>
-      <div class="search-box">${SEARCH_ICON}<input type="text" data-lane="${escapeAttr(l.id)}" data-idx="${i}" value="${escapeHtml(row.text)}" placeholder="Add term…" autocomplete="off"></div>
-      <button class="search-remove" data-lane="${escapeAttr(l.id)}" data-idx="${i}" title="Remove term">&times;</button>
+      <div class="search-box">${SEARCH_ICON}<input type="text" data-scope="${escapeAttr(scope)}" data-idx="${i}" value="${escapeHtml(row.text)}" placeholder="Add term…" autocomplete="off"></div>
+      <button class="search-remove" data-scope="${escapeAttr(scope)}" data-idx="${i}" title="Remove term">&times;</button>
     </div>`;
-    }).join('');
+}
+
+// The list a data-scope refers to. 'global' is the lane-mode bar that narrows
+// every column; anything else is a lane id.
+function rowsFor(scope){
+  return scope === 'global' ? state.global : state.lanes[scope];
+}
+
+function renderSearchRows(){
+  // ALWAYS-VISIBLE BAR. In lane mode this is the ONE global box that searches
+  // all three columns; the per-lane boxes live in the expandable panel below.
+  // In single-list mode it is the catalogue's only box, unchanged.
+  searchRow0El.className = '';
+  const primary = LANE_MODE ? state.global[0] : state.lanes[LANES[0].id][0];
+  const primaryScope = LANE_MODE ? 'global' : LANES[0].id;
+  searchRow0El.innerHTML = `<div class="search-box">${SEARCH_ICON}<input type="text" id="searchInput0-mi" data-scope="${
+    escapeAttr(primaryScope)}" data-idx="0" value="${escapeHtml(primary.text)}" placeholder="${
+    escapeAttr(LANE_MODE ? 'Search all three columns…' : (LANES[0].placeholder || 'Search…'))
+    }" autocomplete="off"></div>`;
+
+  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
+  searchRowsEl.innerHTML = LANES.map(l=>{
+    // Lane mode: this lane's OWN primary box heads its column, above its extra
+    // rows. Single-list mode: row 0 is the always-visible box above, so the
+    // extras start at index 1 exactly as before.
+    const own = LANE_MODE
+      ? `<span class="lane-search-label">${escapeHtml(l.label)}</span>`
+        + `<div class="search-box">${SEARCH_ICON}<input type="text" data-scope="${escapeAttr(l.id)}" data-idx="0" value="${
+           escapeHtml(state.lanes[l.id][0].text)}" placeholder="${escapeAttr(l.placeholder || 'Search…')}" autocomplete="off"></div>`
+      : '';
+    const extra = state.lanes[l.id].slice(1)
+      .map((row, idx)=> searchRowHtml(l.id, row, idx + 1)).join('');
     return LANE_MODE
-      ? `<div class="lane-extra">${extra}<button class="search-add" data-lane="${escapeAttr(l.id)}">+ Add term</button></div>`
+      ? `<div class="lane-extra">${own}${extra}<button class="search-add" data-scope="${escapeAttr(l.id)}">+ Add term</button></div>`
       : extra;
   }).join('');
 
+  // In lane mode the global bar can also carry extra AND/OR/NOT rows; they sit
+  // above the per-lane columns, in the same panel.
+  if(LANE_MODE){
+    const globalExtra = state.global.slice(1)
+      .map((row, idx)=> searchRowHtml('global', row, idx + 1)).join('');
+    searchRowsEl.insertAdjacentHTML('afterbegin',
+      `<div class="global-extra">${globalExtra}<button class="search-add" data-scope="global">+ Add term to the all-columns search</button></div>`);
+  }
+
+  // SCOPED to this panel's own two containers, never document.querySelectorAll:
+  // in the shell four panels share one document, so a document-level query would
+  // wire this panel's handlers onto the other three tabs' inputs.
   [searchRow0El, searchRowsEl].forEach(box=>{
     box.querySelectorAll('input').forEach(inp=>{
       inp.addEventListener('input', e=>{
-        state.lanes[e.target.dataset.lane][+e.target.dataset.idx].text = e.target.value;
+        rowsFor(e.target.dataset.scope)[+e.target.dataset.idx].text = e.target.value;
         render();
       });
     });
   });
   searchRowsEl.querySelectorAll('.search-op').forEach(sel=>{
     sel.addEventListener('change', e=>{
-      state.lanes[e.target.dataset.lane][+e.target.dataset.idx].op = e.target.value;
+      rowsFor(e.target.dataset.scope)[+e.target.dataset.idx].op = e.target.value;
       render();
     });
   });
   searchRowsEl.querySelectorAll('.search-remove').forEach(btn=>{
     btn.addEventListener('click', e=>{
-      state.lanes[e.target.dataset.lane].splice(+e.target.dataset.idx, 1);
+      rowsFor(e.target.dataset.scope).splice(+e.target.dataset.idx, 1);
       renderSearchRows();
       render();
     });
   });
-  // Lane mode generates one add button per lane; the single-list layout's lives
-  // in markup, outside this container, and is wired once below.
+  // Lane mode generates one add button per lane plus one for the global bar;
+  // the single-list layout's lives in markup, outside this container, and is
+  // wired once below.
   searchRowsEl.querySelectorAll('.search-add').forEach(btn=>{
-    btn.addEventListener('click', e=> addTerm(e.target.dataset.lane));
+    btn.addEventListener('click', e=> addTerm(e.target.dataset.scope));
   });
 }
 
-function addTerm(laneId){
-  state.lanes[laneId].push({ op: 'AND', text: '' });
+function addTerm(scope){
+  rowsFor(scope).push({ op: 'AND', text: '' });
   renderSearchRows();
   const inputs = searchRowsEl.querySelectorAll(
-    LANE_MODE ? `.lane-extra input[data-lane="${laneId}"]` : 'input');
+    LANE_MODE ? `input[data-scope="${scope}"]` : 'input');
   if(inputs.length) inputs[inputs.length-1].focus();
 }
 
 const searchAddBtn = document.getElementById('searchAddBtn-mi');
 if(LANE_MODE) searchAddBtn.style.display = 'none';
-else searchAddBtn.addEventListener('click', ()=> addTerm(''));
+else searchAddBtn.addEventListener('click', ()=> addTerm(LANES[0].id));
 
 renderSearchRows();
 
@@ -2249,7 +2353,11 @@ function highlight(text){
   // actually satisfies that row's full word set (mirrors termMatches' same-line
   // rule) — otherwise "aether resist" would also light up "resist" on an
   // unrelated "+X Cold Resist" line that has nothing to do with the match.
-  const terms = (state.lanes[CUR_LANE] || [])
+  // Global rows are included, because passesSearch() matches on them: a card
+  // found by the big bar must have that term marked like any other. Search
+  // scope and highlight scope move together -- fixing one side alone is a bug
+  // this template has shipped before.
+  const terms = [...state.global, ...(state.lanes[CUR_LANE] || [])]
     .filter(r=>r.text.trim() !== '' && r.op !== 'NOT')
     .flatMap(r=>{
       const { requireFlat, words } = parseSearchWords(r.text.trim());
@@ -3082,10 +3190,15 @@ const FACETS = CONFIG.facets.map((f,i)=>({ ...f, id:`facet${i}`, values: facetVa
 const CARD_KEY = new Map(DATA.map((d, i)=> [d, i]));
 const keyOf = d=> CARD_KEY.get(d);
 
-let state = { lanes: {}, openRecipes: new Set(),
+let state = { lanes: {}, global: [{ text: "" }], openRecipes: new Set(),
               craftSel: {}, cardHeights: {} };
 // One independent list of search rows per lane. Single-list catalogues have
 // exactly one, keyed by the empty string.
+// `state.global` is the LANE-MODE-ONLY bar that narrows every lane at once. It
+// is kept separate rather than modelled as another lane, because a pseudo-lane
+// id would leak into LANES and from there into the lane scaffold, LANE_TOTALS
+// and the per-lane counts. Unused in single-list mode, where the one lane's own
+// rows already are the whole query.
 LANES.forEach(l=>{ state.lanes[l.id] = [{ text: "" }]; });
 FACETS.forEach(f=>{ state[f.id] = new Set(f.values); });
 
@@ -3183,6 +3296,7 @@ FACETS.forEach(f=>{
 
 function clearAllFilters(){
   LANES.forEach(l=>{ state.lanes[l.id] = [{ text: "" }]; });
+  state.global = [{ text: "" }];
   renderSearchRows();
   FACETS.forEach(f=>{
     state[f.id] = new Set(f.values);
@@ -3277,7 +3391,10 @@ let searchCacheKey = '';
 // whole-word toggle, a case-sensitivity flag), it belongs here too -- forgetting
 // it does not crash, it silently serves the previous query's answers.
 function syncSearchCache(){
-  const key = JSON.stringify(LANES.map(l=> state.lanes[l.id].map(r=>[r.text, r.op])));
+  const key = JSON.stringify([
+    state.global.map(r=>[r.text, r.op]),
+    LANES.map(l=> state.lanes[l.id].map(r=>[r.text, r.op])),
+  ]);
   if(key !== searchCacheKey){ searchCacheKey = key; searchCache = new Map(); }
 }
 
@@ -3287,12 +3404,13 @@ function searchVerdict(d){
   return v;
 }
 
-// An item is only ever tested against its OWN lane's search rows.
-function passesSearch(d){
-  const rows = (state.lanes[laneOf(d)] || []).filter(r=>r.text.trim() !== '');
-  if(rows.length === 0) return true;
+// Evaluate one list of AND/OR/NOT rows against an item. Empty list -> no
+// opinion (true), so an unused half never narrows anything.
+function rowsMatch(d, rows){
+  const live = rows.filter(r=>r.text.trim() !== '');
+  if(live.length === 0) return true;
   let result = null;
-  rows.forEach((row, i)=>{
+  live.forEach((row, i)=>{
     const m = termMatches(d, row.text.trim());
     if(i === 0){ result = m; return; }
     if(row.op === 'OR') result = result || m;
@@ -3300,6 +3418,14 @@ function passesSearch(d){
     else result = result && m; // default/AND
   });
   return result;
+}
+
+// An item is tested against the GLOBAL rows and its OWN lane's rows, ANDed.
+// AND, not OR: the big bar is a coarse filter across all three columns and each
+// lane's own box narrows within it. OR would make typing in the big bar WIDEN
+// the results, which reads as broken.
+function passesSearch(d){
+  return rowsMatch(d, state.global) && rowsMatch(d, state.lanes[laneOf(d)] || []);
 }
 
 // Faceted counts: for each facet, count items matching the search text and
@@ -3328,84 +3454,113 @@ const searchRow0El = document.getElementById('searchRowFirst-craftable');
 const searchRowsEl = document.getElementById('searchRows-craftable');
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
 
-// ONE implementation for both layouts: every input carries data-lane/data-idx
+// ONE implementation for both layouts: every input carries data-scope/data-idx
 // and one listener reads them, rather than a lane branch keeping two near-copies
-// of the AND/OR/NOT plumbing in sync. A single-list catalogue is the N=1 case --
-// its markup gains the two data attributes and is otherwise what it always was.
-//
-// SCOPED TO THIS PANEL'S OWN TWO CONTAINERS, never document.querySelectorAll:
-// in the shell four panels share one document, so a document-level query would
-// wire this panel's handlers onto the other three tabs' inputs.
-function renderSearchRows(){
-  searchRow0El.className = LANE_MODE ? 'lane-search-row' : '';
-  searchRow0El.innerHTML = LANES.map(l=>{
-    const first = state.lanes[l.id][0];
-    const box = `<div class="search-box">${SEARCH_ICON}<input type="text"${
-      LANE_MODE ? '' : ' id="searchInput0-craftable"'} data-lane="${escapeAttr(l.id)}" data-idx="0" value="${
-      escapeHtml(first.text)}" placeholder="${escapeAttr(l.placeholder || 'Search…')}" autocomplete="off"></div>`;
-    return LANE_MODE
-      ? `<div class="lane-search"><span class="lane-search-label">${escapeHtml(l.label)}</span>${box}</div>`
-      : box;
-  }).join('');
-
-  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
-  searchRowsEl.innerHTML = LANES.map(l=>{
-    const extra = state.lanes[l.id].slice(1).map((row, idx)=>{
-      const i = idx + 1;
-      return `<div class="search-row">
-      <select class="search-op" data-lane="${escapeAttr(l.id)}" data-idx="${i}">
+// of the AND/OR/NOT plumbing in sync. `scope` is a lane id, or 'global' for the
+// lane-mode bar that searches every column -- rowsFor() maps it to a row list.
+// A single-list catalogue is the N=1 case: one lane, no global bar.
+// Builds one AND/OR/NOT row. `scope` is 'global' or a lane id -- it goes into
+// data-scope and the one input handler reads it back, so both row lists share a
+// single implementation.
+function searchRowHtml(scope, row, i){
+  return `<div class="search-row">
+      <select class="search-op" data-scope="${escapeAttr(scope)}" data-idx="${i}">
         <option value="AND"${row.op!=='OR'&&row.op!=='NOT'?' selected':''}>AND</option>
         <option value="OR"${row.op==='OR'?' selected':''}>OR</option>
         <option value="NOT"${row.op==='NOT'?' selected':''}>NOT</option>
       </select>
-      <div class="search-box">${SEARCH_ICON}<input type="text" data-lane="${escapeAttr(l.id)}" data-idx="${i}" value="${escapeHtml(row.text)}" placeholder="Add term…" autocomplete="off"></div>
-      <button class="search-remove" data-lane="${escapeAttr(l.id)}" data-idx="${i}" title="Remove term">&times;</button>
+      <div class="search-box">${SEARCH_ICON}<input type="text" data-scope="${escapeAttr(scope)}" data-idx="${i}" value="${escapeHtml(row.text)}" placeholder="Add term…" autocomplete="off"></div>
+      <button class="search-remove" data-scope="${escapeAttr(scope)}" data-idx="${i}" title="Remove term">&times;</button>
     </div>`;
-    }).join('');
+}
+
+// The list a data-scope refers to. 'global' is the lane-mode bar that narrows
+// every column; anything else is a lane id.
+function rowsFor(scope){
+  return scope === 'global' ? state.global : state.lanes[scope];
+}
+
+function renderSearchRows(){
+  // ALWAYS-VISIBLE BAR. In lane mode this is the ONE global box that searches
+  // all three columns; the per-lane boxes live in the expandable panel below.
+  // In single-list mode it is the catalogue's only box, unchanged.
+  searchRow0El.className = '';
+  const primary = LANE_MODE ? state.global[0] : state.lanes[LANES[0].id][0];
+  const primaryScope = LANE_MODE ? 'global' : LANES[0].id;
+  searchRow0El.innerHTML = `<div class="search-box">${SEARCH_ICON}<input type="text" id="searchInput0-craftable" data-scope="${
+    escapeAttr(primaryScope)}" data-idx="0" value="${escapeHtml(primary.text)}" placeholder="${
+    escapeAttr(LANE_MODE ? 'Search all three columns…' : (LANES[0].placeholder || 'Search…'))
+    }" autocomplete="off"></div>`;
+
+  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
+  searchRowsEl.innerHTML = LANES.map(l=>{
+    // Lane mode: this lane's OWN primary box heads its column, above its extra
+    // rows. Single-list mode: row 0 is the always-visible box above, so the
+    // extras start at index 1 exactly as before.
+    const own = LANE_MODE
+      ? `<span class="lane-search-label">${escapeHtml(l.label)}</span>`
+        + `<div class="search-box">${SEARCH_ICON}<input type="text" data-scope="${escapeAttr(l.id)}" data-idx="0" value="${
+           escapeHtml(state.lanes[l.id][0].text)}" placeholder="${escapeAttr(l.placeholder || 'Search…')}" autocomplete="off"></div>`
+      : '';
+    const extra = state.lanes[l.id].slice(1)
+      .map((row, idx)=> searchRowHtml(l.id, row, idx + 1)).join('');
     return LANE_MODE
-      ? `<div class="lane-extra">${extra}<button class="search-add" data-lane="${escapeAttr(l.id)}">+ Add term</button></div>`
+      ? `<div class="lane-extra">${own}${extra}<button class="search-add" data-scope="${escapeAttr(l.id)}">+ Add term</button></div>`
       : extra;
   }).join('');
 
+  // In lane mode the global bar can also carry extra AND/OR/NOT rows; they sit
+  // above the per-lane columns, in the same panel.
+  if(LANE_MODE){
+    const globalExtra = state.global.slice(1)
+      .map((row, idx)=> searchRowHtml('global', row, idx + 1)).join('');
+    searchRowsEl.insertAdjacentHTML('afterbegin',
+      `<div class="global-extra">${globalExtra}<button class="search-add" data-scope="global">+ Add term to the all-columns search</button></div>`);
+  }
+
+  // SCOPED to this panel's own two containers, never document.querySelectorAll:
+  // in the shell four panels share one document, so a document-level query would
+  // wire this panel's handlers onto the other three tabs' inputs.
   [searchRow0El, searchRowsEl].forEach(box=>{
     box.querySelectorAll('input').forEach(inp=>{
       inp.addEventListener('input', e=>{
-        state.lanes[e.target.dataset.lane][+e.target.dataset.idx].text = e.target.value;
+        rowsFor(e.target.dataset.scope)[+e.target.dataset.idx].text = e.target.value;
         render();
       });
     });
   });
   searchRowsEl.querySelectorAll('.search-op').forEach(sel=>{
     sel.addEventListener('change', e=>{
-      state.lanes[e.target.dataset.lane][+e.target.dataset.idx].op = e.target.value;
+      rowsFor(e.target.dataset.scope)[+e.target.dataset.idx].op = e.target.value;
       render();
     });
   });
   searchRowsEl.querySelectorAll('.search-remove').forEach(btn=>{
     btn.addEventListener('click', e=>{
-      state.lanes[e.target.dataset.lane].splice(+e.target.dataset.idx, 1);
+      rowsFor(e.target.dataset.scope).splice(+e.target.dataset.idx, 1);
       renderSearchRows();
       render();
     });
   });
-  // Lane mode generates one add button per lane; the single-list layout's lives
-  // in markup, outside this container, and is wired once below.
+  // Lane mode generates one add button per lane plus one for the global bar;
+  // the single-list layout's lives in markup, outside this container, and is
+  // wired once below.
   searchRowsEl.querySelectorAll('.search-add').forEach(btn=>{
-    btn.addEventListener('click', e=> addTerm(e.target.dataset.lane));
+    btn.addEventListener('click', e=> addTerm(e.target.dataset.scope));
   });
 }
 
-function addTerm(laneId){
-  state.lanes[laneId].push({ op: 'AND', text: '' });
+function addTerm(scope){
+  rowsFor(scope).push({ op: 'AND', text: '' });
   renderSearchRows();
   const inputs = searchRowsEl.querySelectorAll(
-    LANE_MODE ? `.lane-extra input[data-lane="${laneId}"]` : 'input');
+    LANE_MODE ? `input[data-scope="${scope}"]` : 'input');
   if(inputs.length) inputs[inputs.length-1].focus();
 }
 
 const searchAddBtn = document.getElementById('searchAddBtn-craftable');
 if(LANE_MODE) searchAddBtn.style.display = 'none';
-else searchAddBtn.addEventListener('click', ()=> addTerm(''));
+else searchAddBtn.addEventListener('click', ()=> addTerm(LANES[0].id));
 
 renderSearchRows();
 
@@ -3432,7 +3587,11 @@ function highlight(text){
   // actually satisfies that row's full word set (mirrors termMatches' same-line
   // rule) — otherwise "aether resist" would also light up "resist" on an
   // unrelated "+X Cold Resist" line that has nothing to do with the match.
-  const terms = (state.lanes[CUR_LANE] || [])
+  // Global rows are included, because passesSearch() matches on them: a card
+  // found by the big bar must have that term marked like any other. Search
+  // scope and highlight scope move together -- fixing one side alone is a bug
+  // this template has shipped before.
+  const terms = [...state.global, ...(state.lanes[CUR_LANE] || [])]
     .filter(r=>r.text.trim() !== '' && r.op !== 'NOT')
     .flatMap(r=>{
       const { requireFlat, words } = parseSearchWords(r.text.trim());
@@ -4267,10 +4426,15 @@ const FACETS = CONFIG.facets.map((f,i)=>({ ...f, id:`facet${i}`, values: facetVa
 const CARD_KEY = new Map(DATA.map((d, i)=> [d, i]));
 const keyOf = d=> CARD_KEY.get(d);
 
-let state = { lanes: {}, openRecipes: new Set(),
+let state = { lanes: {}, global: [{ text: "" }], openRecipes: new Set(),
               craftSel: {}, cardHeights: {} };
 // One independent list of search rows per lane. Single-list catalogues have
 // exactly one, keyed by the empty string.
+// `state.global` is the LANE-MODE-ONLY bar that narrows every lane at once. It
+// is kept separate rather than modelled as another lane, because a pseudo-lane
+// id would leak into LANES and from there into the lane scaffold, LANE_TOTALS
+// and the per-lane counts. Unused in single-list mode, where the one lane's own
+// rows already are the whole query.
 LANES.forEach(l=>{ state.lanes[l.id] = [{ text: "" }]; });
 FACETS.forEach(f=>{ state[f.id] = new Set(f.values); });
 
@@ -4368,6 +4532,7 @@ FACETS.forEach(f=>{
 
 function clearAllFilters(){
   LANES.forEach(l=>{ state.lanes[l.id] = [{ text: "" }]; });
+  state.global = [{ text: "" }];
   renderSearchRows();
   FACETS.forEach(f=>{
     state[f.id] = new Set(f.values);
@@ -4462,7 +4627,10 @@ let searchCacheKey = '';
 // whole-word toggle, a case-sensitivity flag), it belongs here too -- forgetting
 // it does not crash, it silently serves the previous query's answers.
 function syncSearchCache(){
-  const key = JSON.stringify(LANES.map(l=> state.lanes[l.id].map(r=>[r.text, r.op])));
+  const key = JSON.stringify([
+    state.global.map(r=>[r.text, r.op]),
+    LANES.map(l=> state.lanes[l.id].map(r=>[r.text, r.op])),
+  ]);
   if(key !== searchCacheKey){ searchCacheKey = key; searchCache = new Map(); }
 }
 
@@ -4472,12 +4640,13 @@ function searchVerdict(d){
   return v;
 }
 
-// An item is only ever tested against its OWN lane's search rows.
-function passesSearch(d){
-  const rows = (state.lanes[laneOf(d)] || []).filter(r=>r.text.trim() !== '');
-  if(rows.length === 0) return true;
+// Evaluate one list of AND/OR/NOT rows against an item. Empty list -> no
+// opinion (true), so an unused half never narrows anything.
+function rowsMatch(d, rows){
+  const live = rows.filter(r=>r.text.trim() !== '');
+  if(live.length === 0) return true;
   let result = null;
-  rows.forEach((row, i)=>{
+  live.forEach((row, i)=>{
     const m = termMatches(d, row.text.trim());
     if(i === 0){ result = m; return; }
     if(row.op === 'OR') result = result || m;
@@ -4485,6 +4654,14 @@ function passesSearch(d){
     else result = result && m; // default/AND
   });
   return result;
+}
+
+// An item is tested against the GLOBAL rows and its OWN lane's rows, ANDed.
+// AND, not OR: the big bar is a coarse filter across all three columns and each
+// lane's own box narrows within it. OR would make typing in the big bar WIDEN
+// the results, which reads as broken.
+function passesSearch(d){
+  return rowsMatch(d, state.global) && rowsMatch(d, state.lanes[laneOf(d)] || []);
 }
 
 // Faceted counts: for each facet, count items matching the search text and
@@ -4513,84 +4690,113 @@ const searchRow0El = document.getElementById('searchRowFirst-affix');
 const searchRowsEl = document.getElementById('searchRows-affix');
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
 
-// ONE implementation for both layouts: every input carries data-lane/data-idx
+// ONE implementation for both layouts: every input carries data-scope/data-idx
 // and one listener reads them, rather than a lane branch keeping two near-copies
-// of the AND/OR/NOT plumbing in sync. A single-list catalogue is the N=1 case --
-// its markup gains the two data attributes and is otherwise what it always was.
-//
-// SCOPED TO THIS PANEL'S OWN TWO CONTAINERS, never document.querySelectorAll:
-// in the shell four panels share one document, so a document-level query would
-// wire this panel's handlers onto the other three tabs' inputs.
-function renderSearchRows(){
-  searchRow0El.className = LANE_MODE ? 'lane-search-row' : '';
-  searchRow0El.innerHTML = LANES.map(l=>{
-    const first = state.lanes[l.id][0];
-    const box = `<div class="search-box">${SEARCH_ICON}<input type="text"${
-      LANE_MODE ? '' : ' id="searchInput0-affix"'} data-lane="${escapeAttr(l.id)}" data-idx="0" value="${
-      escapeHtml(first.text)}" placeholder="${escapeAttr(l.placeholder || 'Search…')}" autocomplete="off"></div>`;
-    return LANE_MODE
-      ? `<div class="lane-search"><span class="lane-search-label">${escapeHtml(l.label)}</span>${box}</div>`
-      : box;
-  }).join('');
-
-  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
-  searchRowsEl.innerHTML = LANES.map(l=>{
-    const extra = state.lanes[l.id].slice(1).map((row, idx)=>{
-      const i = idx + 1;
-      return `<div class="search-row">
-      <select class="search-op" data-lane="${escapeAttr(l.id)}" data-idx="${i}">
+// of the AND/OR/NOT plumbing in sync. `scope` is a lane id, or 'global' for the
+// lane-mode bar that searches every column -- rowsFor() maps it to a row list.
+// A single-list catalogue is the N=1 case: one lane, no global bar.
+// Builds one AND/OR/NOT row. `scope` is 'global' or a lane id -- it goes into
+// data-scope and the one input handler reads it back, so both row lists share a
+// single implementation.
+function searchRowHtml(scope, row, i){
+  return `<div class="search-row">
+      <select class="search-op" data-scope="${escapeAttr(scope)}" data-idx="${i}">
         <option value="AND"${row.op!=='OR'&&row.op!=='NOT'?' selected':''}>AND</option>
         <option value="OR"${row.op==='OR'?' selected':''}>OR</option>
         <option value="NOT"${row.op==='NOT'?' selected':''}>NOT</option>
       </select>
-      <div class="search-box">${SEARCH_ICON}<input type="text" data-lane="${escapeAttr(l.id)}" data-idx="${i}" value="${escapeHtml(row.text)}" placeholder="Add term…" autocomplete="off"></div>
-      <button class="search-remove" data-lane="${escapeAttr(l.id)}" data-idx="${i}" title="Remove term">&times;</button>
+      <div class="search-box">${SEARCH_ICON}<input type="text" data-scope="${escapeAttr(scope)}" data-idx="${i}" value="${escapeHtml(row.text)}" placeholder="Add term…" autocomplete="off"></div>
+      <button class="search-remove" data-scope="${escapeAttr(scope)}" data-idx="${i}" title="Remove term">&times;</button>
     </div>`;
-    }).join('');
+}
+
+// The list a data-scope refers to. 'global' is the lane-mode bar that narrows
+// every column; anything else is a lane id.
+function rowsFor(scope){
+  return scope === 'global' ? state.global : state.lanes[scope];
+}
+
+function renderSearchRows(){
+  // ALWAYS-VISIBLE BAR. In lane mode this is the ONE global box that searches
+  // all three columns; the per-lane boxes live in the expandable panel below.
+  // In single-list mode it is the catalogue's only box, unchanged.
+  searchRow0El.className = '';
+  const primary = LANE_MODE ? state.global[0] : state.lanes[LANES[0].id][0];
+  const primaryScope = LANE_MODE ? 'global' : LANES[0].id;
+  searchRow0El.innerHTML = `<div class="search-box">${SEARCH_ICON}<input type="text" id="searchInput0-affix" data-scope="${
+    escapeAttr(primaryScope)}" data-idx="0" value="${escapeHtml(primary.text)}" placeholder="${
+    escapeAttr(LANE_MODE ? 'Search all three columns…' : (LANES[0].placeholder || 'Search…'))
+    }" autocomplete="off"></div>`;
+
+  searchRowsEl.className = LANE_MODE ? 'lane-extra-row' : '';
+  searchRowsEl.innerHTML = LANES.map(l=>{
+    // Lane mode: this lane's OWN primary box heads its column, above its extra
+    // rows. Single-list mode: row 0 is the always-visible box above, so the
+    // extras start at index 1 exactly as before.
+    const own = LANE_MODE
+      ? `<span class="lane-search-label">${escapeHtml(l.label)}</span>`
+        + `<div class="search-box">${SEARCH_ICON}<input type="text" data-scope="${escapeAttr(l.id)}" data-idx="0" value="${
+           escapeHtml(state.lanes[l.id][0].text)}" placeholder="${escapeAttr(l.placeholder || 'Search…')}" autocomplete="off"></div>`
+      : '';
+    const extra = state.lanes[l.id].slice(1)
+      .map((row, idx)=> searchRowHtml(l.id, row, idx + 1)).join('');
     return LANE_MODE
-      ? `<div class="lane-extra">${extra}<button class="search-add" data-lane="${escapeAttr(l.id)}">+ Add term</button></div>`
+      ? `<div class="lane-extra">${own}${extra}<button class="search-add" data-scope="${escapeAttr(l.id)}">+ Add term</button></div>`
       : extra;
   }).join('');
 
+  // In lane mode the global bar can also carry extra AND/OR/NOT rows; they sit
+  // above the per-lane columns, in the same panel.
+  if(LANE_MODE){
+    const globalExtra = state.global.slice(1)
+      .map((row, idx)=> searchRowHtml('global', row, idx + 1)).join('');
+    searchRowsEl.insertAdjacentHTML('afterbegin',
+      `<div class="global-extra">${globalExtra}<button class="search-add" data-scope="global">+ Add term to the all-columns search</button></div>`);
+  }
+
+  // SCOPED to this panel's own two containers, never document.querySelectorAll:
+  // in the shell four panels share one document, so a document-level query would
+  // wire this panel's handlers onto the other three tabs' inputs.
   [searchRow0El, searchRowsEl].forEach(box=>{
     box.querySelectorAll('input').forEach(inp=>{
       inp.addEventListener('input', e=>{
-        state.lanes[e.target.dataset.lane][+e.target.dataset.idx].text = e.target.value;
+        rowsFor(e.target.dataset.scope)[+e.target.dataset.idx].text = e.target.value;
         render();
       });
     });
   });
   searchRowsEl.querySelectorAll('.search-op').forEach(sel=>{
     sel.addEventListener('change', e=>{
-      state.lanes[e.target.dataset.lane][+e.target.dataset.idx].op = e.target.value;
+      rowsFor(e.target.dataset.scope)[+e.target.dataset.idx].op = e.target.value;
       render();
     });
   });
   searchRowsEl.querySelectorAll('.search-remove').forEach(btn=>{
     btn.addEventListener('click', e=>{
-      state.lanes[e.target.dataset.lane].splice(+e.target.dataset.idx, 1);
+      rowsFor(e.target.dataset.scope).splice(+e.target.dataset.idx, 1);
       renderSearchRows();
       render();
     });
   });
-  // Lane mode generates one add button per lane; the single-list layout's lives
-  // in markup, outside this container, and is wired once below.
+  // Lane mode generates one add button per lane plus one for the global bar;
+  // the single-list layout's lives in markup, outside this container, and is
+  // wired once below.
   searchRowsEl.querySelectorAll('.search-add').forEach(btn=>{
-    btn.addEventListener('click', e=> addTerm(e.target.dataset.lane));
+    btn.addEventListener('click', e=> addTerm(e.target.dataset.scope));
   });
 }
 
-function addTerm(laneId){
-  state.lanes[laneId].push({ op: 'AND', text: '' });
+function addTerm(scope){
+  rowsFor(scope).push({ op: 'AND', text: '' });
   renderSearchRows();
   const inputs = searchRowsEl.querySelectorAll(
-    LANE_MODE ? `.lane-extra input[data-lane="${laneId}"]` : 'input');
+    LANE_MODE ? `input[data-scope="${scope}"]` : 'input');
   if(inputs.length) inputs[inputs.length-1].focus();
 }
 
 const searchAddBtn = document.getElementById('searchAddBtn-affix');
 if(LANE_MODE) searchAddBtn.style.display = 'none';
-else searchAddBtn.addEventListener('click', ()=> addTerm(''));
+else searchAddBtn.addEventListener('click', ()=> addTerm(LANES[0].id));
 
 renderSearchRows();
 
@@ -4617,7 +4823,11 @@ function highlight(text){
   // actually satisfies that row's full word set (mirrors termMatches' same-line
   // rule) — otherwise "aether resist" would also light up "resist" on an
   // unrelated "+X Cold Resist" line that has nothing to do with the match.
-  const terms = (state.lanes[CUR_LANE] || [])
+  // Global rows are included, because passesSearch() matches on them: a card
+  // found by the big bar must have that term marked like any other. Search
+  // scope and highlight scope move together -- fixing one side alone is a bug
+  // this template has shipped before.
+  const terms = [...state.global, ...(state.lanes[CUR_LANE] || [])]
     .filter(r=>r.text.trim() !== '' && r.op !== 'NOT')
     .flatMap(r=>{
       const { requireFlat, words } = parseSearchWords(r.text.trim());
