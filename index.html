@@ -1651,10 +1651,10 @@ function cardHtml(d){
     // already SAYS the slot chip below it ("Ranged") -- showing both reads
     // as the same word twice. Drop the chip only when every word in the
     // slot label also appears in the badge (word-SET comparison, not a
-    // substring check: the affix review page's sibling template needs this
-    // same rule for labels shaped "Ranged (2H)" vs a badge of "2H Ranged" --
-    // same words, different order/punctuation, so a plain .endsWith() would
-    // have missed it there). Non-weapon cards (no badge) and Augments (no
+    // substring check). The rule was learned from labels shaped "Ranged (2H)"
+    // against a badge of "2H Ranged" -- same words, different order and
+    // punctuation, so a plain .endsWith() missed it while passing on this
+    // template's own "1H Axe" / "Axe" vocabulary. Non-weapon cards (no badge) and Augments (no
     // badge at all) are unaffected, so this can't hide a chip that isn't
     // actually redundant.
     const famTag = famTagRedundant(d.badge, d.slotLabel)
@@ -2882,10 +2882,10 @@ function cardHtml(d){
     // already SAYS the slot chip below it ("Ranged") -- showing both reads
     // as the same word twice. Drop the chip only when every word in the
     // slot label also appears in the badge (word-SET comparison, not a
-    // substring check: the affix review page's sibling template needs this
-    // same rule for labels shaped "Ranged (2H)" vs a badge of "2H Ranged" --
-    // same words, different order/punctuation, so a plain .endsWith() would
-    // have missed it there). Non-weapon cards (no badge) and Augments (no
+    // substring check). The rule was learned from labels shaped "Ranged (2H)"
+    // against a badge of "2H Ranged" -- same words, different order and
+    // punctuation, so a plain .endsWith() missed it while passing on this
+    // template's own "1H Axe" / "Axe" vocabulary. Non-weapon cards (no badge) and Augments (no
     // badge at all) are unaffected, so this can't hide a chip that isn't
     // actually redundant.
     const famTag = famTagRedundant(d.badge, d.slotLabel)
@@ -4130,10 +4130,10 @@ function cardHtml(d){
     // already SAYS the slot chip below it ("Ranged") -- showing both reads
     // as the same word twice. Drop the chip only when every word in the
     // slot label also appears in the badge (word-SET comparison, not a
-    // substring check: the affix review page's sibling template needs this
-    // same rule for labels shaped "Ranged (2H)" vs a badge of "2H Ranged" --
-    // same words, different order/punctuation, so a plain .endsWith() would
-    // have missed it there). Non-weapon cards (no badge) and Augments (no
+    // substring check). The rule was learned from labels shaped "Ranged (2H)"
+    // against a badge of "2H Ranged" -- same words, different order and
+    // punctuation, so a plain .endsWith() missed it while passing on this
+    // template's own "1H Axe" / "Axe" vocabulary. Non-weapon cards (no badge) and Augments (no
     // badge at all) are unaffected, so this can't hide a chip that isn't
     // actually redundant.
     const famTag = famTagRedundant(d.badge, d.slotLabel)
@@ -5380,10 +5380,10 @@ function cardHtml(d){
     // already SAYS the slot chip below it ("Ranged") -- showing both reads
     // as the same word twice. Drop the chip only when every word in the
     // slot label also appears in the badge (word-SET comparison, not a
-    // substring check: the affix review page's sibling template needs this
-    // same rule for labels shaped "Ranged (2H)" vs a badge of "2H Ranged" --
-    // same words, different order/punctuation, so a plain .endsWith() would
-    // have missed it there). Non-weapon cards (no badge) and Augments (no
+    // substring check). The rule was learned from labels shaped "Ranged (2H)"
+    // against a badge of "2H Ranged" -- same words, different order and
+    // punctuation, so a plain .endsWith() missed it while passing on this
+    // template's own "1H Axe" / "Axe" vocabulary. Non-weapon cards (no badge) and Augments (no
     // badge at all) are unaffected, so this can't hide a chip that isn't
     // actually redundant.
     const famTag = famTagRedundant(d.badge, d.slotLabel)
